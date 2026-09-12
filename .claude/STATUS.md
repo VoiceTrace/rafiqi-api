@@ -2,7 +2,7 @@
 
 ## Current State
 
-**No tickets completed yet.** Project is in setup/scaffolding phase — stack confirmed, ready to start A1.
+**A1 complete.** Data models, migration, schemas, and tests all green. Ready for A2.
 
 ## Session History
 
@@ -32,14 +32,28 @@
 
 ## Completed Tickets
 
-None.
+### A1 — Profile data model (2026-09-12)
+**What was built:**
+- Full project scaffold: `app/`, `alembic/`, `tests/`, `requirements.txt`, `.env.example`
+- SQLAlchemy models: `School`, `User`, `StudentProfile`, `ProfileTrait`, `Conversation`
+- Migration: `alembic/versions/ef81a87bd4aa_a1_initial_schema.py` (hand-written — no local DB)
+- Pydantic schemas: `app/schemas/profile.py` — `ProfileTraitOut`, `StudentProfileOut`, `TraitKey` controlled vocabulary
+- 14 passing tests covering model columns, indexes, confidence threshold, enums
+- `app/core/`: `config.py`, `database.py`, `errors.py`
+
+**Key decisions made:**
+- `score` (float 0.0–1.0): agent-facing, how confident LLM is about this trait
+- `confidence` ("confident" | "still_forming"): user-facing label, derived from score (threshold = 0.7)
+- `trait_key`: plain string in DB, controlled vocabulary enforced at app layer via `TraitKey` StrEnum — no migration needed when adding new trait types
+- `category`: "preferences" | "goals" — matches the two UI card sections in the frontend
+- `source_conversation_id` on `ProfileTrait`: FK to conversations, wired now so A4 doesn't require a migration later
 
 ## Next Ticket
 
-**A1** — Profile data model (Foundation)
-- Must be done before anything else in Epic A
-- Key decisions: multi-tenant schema design, trait/confidence model, how much detail is PDPL-safe to store (A8 constraint)
-- This is a hard-to-reverse data model — confirm schema design before running first migration
+**A2** — Cave chat
+- Student talks with Rafiqi in "Rafiqi's Cave" to build the profile conversationally
+- Needs: auth dependency (first route that requires it), LLM integration (Claude Haiku), conversation session management
+- **Stop before starting**: auth approach still undecided — need to confirm before wiring the first protected route
 
 ## Build Order (from CLAUDE.md)
 
