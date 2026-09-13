@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/rafiqi"
 
     SECRET_KEY: str = "change-me-in-production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_HOURS: int = 6
     ENVIRONMENT: str = "development"
 
 
