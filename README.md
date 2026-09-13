@@ -40,13 +40,10 @@ pip install -r requirements.txt
 **3. Start the database**
 
 ```bash
-docker run -d --name rafiqi-db \
-  -e POSTGRES_USER=rafiqi \
-  -e POSTGRES_PASSWORD=rafiqi \
-  -e POSTGRES_DB=rafiqi \
-  -p 5432:5432 \
-  postgres:16-alpine
+docker compose up -d
 ```
+
+This starts PostgreSQL 16 on port 5432 with a named volume so data persists across restarts. To stop: `docker compose down`. To wipe data too: `docker compose down -v`.
 
 **4. Configure environment**
 

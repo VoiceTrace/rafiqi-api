@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: rafiqi-db
+    environment:
+      POSTGRES_USER: rafiqi
+      POSTGRES_PASSWORD: rafiqi
+      POSTGRES_DB: rafiqi
+    ports:
+      - "5432:5432"
+    volumes:
+      - rafiqi_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rafiqi -d rafiqi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  rafiqi_db_data:
