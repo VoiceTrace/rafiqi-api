@@ -2,7 +2,7 @@
 
 ## Current State
 
-**A1 complete.** Data models, migration, schemas, and tests all green. Ready for A2.
+**A1 + Auth complete. DB running.** 26/26 tests green. Ready for A2.
 
 ## Session History
 
@@ -26,7 +26,6 @@
 - **LLM gateway**: Claude (Haiku-class for high-volume cheap tier, stronger model for synthesis) — per CLAUDE.md model strategy
 
 **Still open:**
-- Auth approach (JWT custom vs. Supabase Auth vs. other)
 - Hosting/infra + KSA data residency requirement (PDPL)
 - Real-time layer for C2 (WebSocket vs. SSE vs. third-party pub-sub)
 
@@ -52,8 +51,8 @@
 
 **A2** — Cave chat
 - Student talks with Rafiqi in "Rafiqi's Cave" to build the profile conversationally
-- Needs: auth dependency (first route that requires it), LLM integration (Claude Haiku), conversation session management
-- **Stop before starting**: auth approach still undecided — need to confirm before wiring the first protected route
+- Auth is done — `require_student` dep ready to use
+- Needs: Anthropic API key, LLM integration (Claude Haiku), conversation session management
 
 ## Build Order (from CLAUDE.md)
 
@@ -66,7 +65,6 @@
 
 ## Open Questions / Decisions to Track
 
-- [ ] Auth approach: JWT custom vs. Supabase Auth vs. other?
 - [ ] PDPL/A8: what trait fields are allowed to be stored? Must resolve before A3 storage depth is built
 - [ ] Arabic LLM quality: needs explicit testing, not assumed — when to test?
 - [ ] Real-time layer for C2: WebSocket vs. SSE vs. third-party pub-sub (Ably, Pusher, etc.)?
@@ -76,3 +74,5 @@
 
 - **Multi-tenancy**: row-level `school_id` FK on all student/teacher/school tables (confirmed via db-migrations skill)
 - **Stack**: Python/FastAPI + PostgreSQL + SQLAlchemy + Alembic + pytest-asyncio (confirmed via skills)
+- **Auth**: custom JWT (python-jose + bcrypt), 6h expiry, payload carries user_id + school_id + role
+- **Docker DB**: postgres:16-alpine, container name `rafiqi-db`, port 5432, creds rafiqi/rafiqi, migration applied
