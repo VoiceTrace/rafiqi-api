@@ -77,7 +77,17 @@ Creates one school, one teacher, and one student:
 uvicorn app.main:app --reload --port 8000
 ```
 
-API is available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+API is available at `http://localhost:8000`.
+
+## API Docs
+
+| URL | Tool | Use for |
+|---|---|---|
+| `http://localhost:8000/docs` | Swagger UI | Interactive testing — try requests directly in the browser |
+| `http://localhost:8000/redoc` | ReDoc | Readable reference — cleaner layout for reading the full spec |
+| `http://localhost:8000/openapi.json` | Raw OpenAPI schema | Import into Postman, Insomnia, or generate a client SDK |
+
+The docs include example request bodies (teacher + student credentials pre-filled), JWT token format, error shapes, and role/multi-tenancy explanations. No backend knowledge required to use the API from the frontend.
 
 ## Running Tests
 
