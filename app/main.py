@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from app.api.routes import auth
+from app.api.routes import auth, users
 
 description = """
 ## Rafiqi API
@@ -59,6 +59,12 @@ tags_metadata = [
         "description": "Login and obtain a JWT access token.",
     },
     {
+        "name": "users",
+        "description": "User management — CRUD for teachers and students within a school. "
+                       "`GET /users/me` and `PATCH /users/me` are available to both roles. "
+                       "All other routes are teacher-only.",
+    },
+    {
         "name": "profiles",
         "description": "Student profile — traits, confidence scores, teaching tips. "
                        "Built automatically from Cave chat (A2/A3). "
@@ -100,6 +106,7 @@ app = FastAPI(
 )
 
 app.include_router(auth.router)
+app.include_router(users.router)
 
 
 @app.get("/health", tags=["health"], summary="Health check")
