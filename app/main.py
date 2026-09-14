@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth, users
+from app.core.config import settings
 
 description = """
 ## Rafiqi API
@@ -89,6 +92,9 @@ tags_metadata = [
     },
 ]
 
+# Ensure upload directories exist before StaticFiles mounts
+Path(settings.MEDIA_DIR, "avatars").mkdir(parents=True, exist_ok=True)
+
 app = FastAPI(
     title="Rafiqi API",
     version="0.1.0",
@@ -107,6 +113,8 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+
+app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
 
 @app.get("/health", tags=["health"], summary="Health check")

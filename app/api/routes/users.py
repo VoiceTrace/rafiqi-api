@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_current_user, get_db_session, require_teacher
@@ -29,6 +29,41 @@ async def update_me(
 ) -> UserRead:
     """Update own `full_name` and/or `password`. Available to both roles."""
     user = await user_svc.update_me(current_user.id, body, db)
+    return UserRead.model_validate(user)
+
+
+@router.put(
+    "/me/avatar",
+    response_model=UserRead,
+    summary="Upload own avatar",
+    responses={
+        400: {"description": "Unsupported file type (JPEG, PNG, WebP only)."},
+        413: {"description": "File exceeds 5 MB limit."},
+    },
+)
+async def upload_own_avatar(
+    file: UploadFile,
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db_session),
+) -> UserRead:
+    """
+    Upload a profile photo. Accepts JPEG, PNG or WebP, maximum 5 MB.
+    Returns the updated user with `avatar_url` set to `/media/avatars/{id}.{ext}`.
+    The frontend prefixes this path with the API base URL to build the full image URL.
+
+    Available to both roles (own avatar only).
+    """
+    user = await user_svc.upload_own_avatar(current_user.id, file, db)
+    return UserRead.model_validate(user)
+
+
+@router.delete("/me/avatar", response_model=UserRead, summary="Remove own avatar")
+async def remove_own_avatar(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db_session),
+) -> UserRead:
+    """Remove own profile photo. Sets `avatar_url` to null. Available to both roles."""
+    user = await user_svc.remove_own_avatar(current_user.id, db)
     return UserRead.model_validate(user)
 
 
@@ -126,6 +161,47 @@ async def update_user(
     Teacher access only.
     """
     user = await user_svc.update_user(user_id, current_user.school_id, body, db)
+    return UserRead.model_validate(user)
+
+
+@router.put(
+    "/{user_id}/avatar",
+    response_model=UserRead,
+    summary="Upload avatar for user",
+    responses={
+        400: {"description": "Unsupported file type."},
+        404: {"description": "User not found in this school."},
+        413: {"description": "File exceeds 5 MB limit."},
+        403: {"description": "Teacher access required."},
+    },
+)
+async def upload_user_avatar(
+    user_id: uuid.UUID,
+    file: UploadFile,
+    current_user: Annotated[CurrentUser, Depends(require_teacher)],
+    db: AsyncSession = Depends(get_db_session),
+) -> UserRead:
+    """Upload a profile photo for any user in the school. Teacher access only."""
+    user = await user_svc.upload_user_avatar(user_id, current_user.school_id, file, db)
+    return UserRead.model_validate(user)
+
+
+@router.delete(
+    "/{user_id}/avatar",
+    response_model=UserRead,
+    summary="Remove avatar for user",
+    responses={
+        404: {"description": "User not found in this school."},
+        403: {"description": "Teacher access required."},
+    },
+)
+async def remove_user_avatar(
+    user_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_teacher)],
+    db: AsyncSession = Depends(get_db_session),
+) -> UserRead:
+    """Remove a profile photo for any user in the school. Teacher access only."""
+    user = await user_svc.remove_user_avatar(user_id, current_user.school_id, db)
     return UserRead.model_validate(user)
 
 

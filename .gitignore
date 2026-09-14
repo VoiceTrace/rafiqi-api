@@ -7,3 +7,7 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+
+# Uploaded media — keep directory structure, ignore actual files
+media/avatars/*
+!media/avatars/.gitkeep

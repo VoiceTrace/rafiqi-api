@@ -1,14 +1,19 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import ErrorCode
 from app.core.security import hash_password
 from app.models.user import User
 from app.schemas.user import UserCreate, UserSelfUpdate, UserUpdate
+
+_AVATAR_ALLOWED_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
 def _not_found() -> HTTPException:
@@ -101,6 +106,71 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _set_avatar(user: User, file: UploadFile, db: AsyncSession) -> User:
+    content_type = file.content_type or ""
+    if content_type not in _AVATAR_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": ErrorCode.VALIDATION_ERROR, "message": "Unsupported type. Use JPEG, PNG or WebP."}},
+        )
+
+    data = await file.read()
+    if len(data) > _AVATAR_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"error": {"code": ErrorCode.VALIDATION_ERROR, "message": "Image too large. Maximum 5 MB."}},
+        )
+
+    ext = _AVATAR_ALLOWED_TYPES[content_type]
+    avatars_dir = Path(settings.MEDIA_DIR) / "avatars"
+
+    # Remove any existing avatar file for this user (handles extension changes)
+    for old_file in avatars_dir.glob(f"{user.id}.*"):
+        old_file.unlink(missing_ok=True)
+
+    (avatars_dir / f"{user.id}.{ext}").write_bytes(data)
+
+    user.avatar_url = f"/media/avatars/{user.id}.{ext}"
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def _clear_avatar(user: User, db: AsyncSession) -> User:
+    if user.avatar_url:
+        Path(user.avatar_url.lstrip("/")).unlink(missing_ok=True)
+    user.avatar_url = None
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def upload_own_avatar(user_id: uuid.UUID, file: UploadFile, db: AsyncSession) -> User:
+    user = await get_me(user_id, db)
+    return await _set_avatar(user, file, db)
+
+
+async def remove_own_avatar(user_id: uuid.UUID, db: AsyncSession) -> User:
+    user = await get_me(user_id, db)
+    return await _clear_avatar(user, db)
+
+
+async def upload_user_avatar(
+    user_id: uuid.UUID, school_id: uuid.UUID, file: UploadFile, db: AsyncSession
+) -> User:
+    user = await get_user(user_id, school_id, db)
+    return await _set_avatar(user, file, db)
+
+
+async def remove_user_avatar(
+    user_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
+) -> User:
+    user = await get_user(user_id, school_id, db)
+    return await _clear_avatar(user, db)
 
 
 async def deactivate_user(
