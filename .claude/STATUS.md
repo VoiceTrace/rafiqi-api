@@ -1,8 +1,25 @@
 # Rafiqi — Build Status
 
+## ⚠ Scope change (2026-09-15)
+
+`docs/artifact.md` (Revision 2, Younis) is now the source of truth. Read it before any ticket work.
+
+**Key changes vs the original plan:**
+- **Epic C (during-class) deferred to v2** — no realtime infrastructure in v1
+- **Epic D (Study Sessions) added** — 6 tickets, replaces C as source of behavioural/performance data
+- **Epic E (Homework Generation) added** — 5 tickets, differentiated per student from mastery data
+- **`MasteryRecord` (D4) is now a blocker** for Epic E — concept-level mastery must exist before targeted homework can be generated
+- **A8 must be resolved before A1 is finalised** — A8 determines schema, retention rules, and compliance surface
+
+---
+
 ## Current State
 
-**A1 + Auth complete. DB running.** 26/26 tests green. Ready for A2.
+**A1 + Auth complete. DB running.** 26/26 tests green.
+
+> **Before starting A2:** A8 decisions must be made (see Open Decisions below). A8 now covers performance data (D3/D4) and parent-visible output (E3) in addition to the original profile data scope.
+
+---
 
 ## Session History
 
@@ -14,6 +31,14 @@
 - Three skills scaffolded and organized: `fastapi-conventions`, `db-migrations`, `testing`
 - Stack confirmed (see Tech Stack below) — unblocked, ready for A1
 
+### Session 2 (2026-09-15)
+- `docs/artifact.md` received and formatted — Revision 2 review by Younis
+- CLAUDE.md updated: source of truth, scope, build order, system design, risks all revised
+- STATUS.md updated to reflect new scope and open decisions
+- Epic C fully deferred; Epics D and E added to plan
+
+---
+
 ## Tech Stack
 
 **Confirmed:**
@@ -23,11 +48,15 @@
 - **Migrations**: Alembic
 - **Testing**: pytest + pytest-asyncio + httpx.AsyncClient
 - **Multi-tenancy**: row-level `school_id` scoping on all student/teacher/school tables
-- **LLM gateway**: Claude (Haiku-class for high-volume cheap tier, stronger model for synthesis) — per CLAUDE.md model strategy
+- **LLM gateway**: Claude (Haiku-class for high-volume cheap tier, stronger model for synthesis)
+- **Auth**: custom JWT (python-jose + bcrypt), 6h expiry, payload carries user_id + school_id + role
+- **Docker DB**: postgres:16-alpine, container name `rafiqi-db`, port 5432
 
 **Still open:**
-- Hosting/infra + KSA data residency requirement (PDPL)
-- Real-time layer for C2 (WebSocket vs. SSE vs. third-party pub-sub)
+- Hosting/infra + KSA data residency (PDPL)
+- Realtime layer — not required for v1 (Epic C deferred)
+
+---
 
 ## Completed Tickets
 
@@ -35,44 +64,63 @@
 **What was built:**
 - Full project scaffold: `app/`, `alembic/`, `tests/`, `requirements.txt`, `.env.example`
 - SQLAlchemy models: `School`, `User`, `StudentProfile`, `ProfileTrait`, `Conversation`
-- Migration: `alembic/versions/ef81a87bd4aa_a1_initial_schema.py` (hand-written — no local DB)
-- Pydantic schemas: `app/schemas/profile.py` — `ProfileTraitOut`, `StudentProfileOut`, `TraitKey` controlled vocabulary
+- Migration: `alembic/versions/ef81a87bd4aa_a1_initial_schema.py`
+- Pydantic schemas: `app/schemas/profile.py` — `ProfileTraitOut`, `StudentProfileOut`, `TraitKey`
 - 14 passing tests covering model columns, indexes, confidence threshold, enums
 - `app/core/`: `config.py`, `database.py`, `errors.py`
 
 **Key decisions made:**
-- `score` (float 0.0–1.0): agent-facing, how confident LLM is about this trait
-- `confidence` ("confident" | "still_forming"): user-facing label, derived from score (threshold = 0.7)
-- `trait_key`: plain string in DB, controlled vocabulary enforced at app layer via `TraitKey` StrEnum — no migration needed when adding new trait types
-- `category`: "preferences" | "goals" — matches the two UI card sections in the frontend
-- `source_conversation_id` on `ProfileTrait`: FK to conversations, wired now so A4 doesn't require a migration later
+- `score` (float 0.0–1.0): agent-facing confidence
+- `confidence` ("confident" | "still_forming"): user-facing label, threshold = 0.7
+- `trait_key`: plain string in DB, controlled vocabulary via `TraitKey` StrEnum
+- `category`: "preferences" | "goals"
+- `source_conversation_id` on `ProfileTrait`: FK to conversations, wired for A4
 
-## Next Ticket
+**⚠ Revision 2 note:** A1 schema will need extension to reference `MasteryRecord` (D4). Do not treat A1 as fully closed until D4's model shape is decided (see Open Decisions).
 
-**A2** — Cave chat
-- Student talks with Rafiqi in "Rafiqi's Cave" to build the profile conversationally
-- Auth is done — `require_student` dep ready to use
-- Needs: Anthropic API key, LLM integration (Claude Haiku), conversation session management
+---
 
-## Build Order (from CLAUDE.md)
+## Build Order (Revision 2)
 
-1. Foundations: A1, A2, B1, C1, C2
-2. Profile loop: A3 → A6 → A7
-3. Pre-class loop: B2/B3 → B5 → B6/B7
-4. Live-class loop: C3 → C4 → C5 → C6
-5. Don't leave for later: A5, A8
-6. Nice-to-haves: A9, B4, B8, C7, C8
+```
+0. Decisions first (no code)   A8 answers · A3 promotion rule · A6 disclosure rule
+                               · D4 mastery model shape · N6 school validation call
+1. Foundations                 A1 · A2 · B1
+2. Profile loop + trust        A3 → A6 + A5 → A7 + A9
+3. Study loop                  D1 · D2 → D3 → D4 → D5 → D6
+4. Pre-class loop              B2/B3 → B5 + N4 → B6/B7
+5. The link                    N1  (profile digest into prep)
+6. Homework loop               E1 → E2 → E3 + E4 → E5
+7. Polish                      B4 · B8
+–  Live loop (v2 only)         C1 · C2 → C3 → C4 → C5 → C6 → C8
+```
 
-## Open Questions / Decisions to Track
+---
 
-- [ ] PDPL/A8: what trait fields are allowed to be stored? Must resolve before A3 storage depth is built
-- [ ] Arabic LLM quality: needs explicit testing, not assumed — when to test?
-- [ ] Real-time layer for C2: WebSocket vs. SSE vs. third-party pub-sub (Ably, Pusher, etc.)?
-- [ ] KSA hosting: is infra required to be in-region for PDPL compliance?
+## Open Decisions — must resolve before the relevant ticket is built
+
+| Decision | Blocks | Notes |
+|----------|--------|-------|
+| **A8: who consents** (guardian, school, or both) | A1 finalised, A3 | Written data-handling note required, not just a review |
+| **A8: retention period + deletion rights** | A1 finalised | Post-retention handling and guardian deletion rights |
+| **A8: performance data scope** | D3, D4 | Attempts/errors are more sensitive than behavioural reads |
+| **A8: parent-visible output policy** | E3 | Epic E sends output to the home — widens compliance surface |
+| **A3: promotion rule** (forming → confident) | A3 | Number of observations? Consistency across subjects? Elapsed time? |
+| **A6: disclosure rule** | A6 | Narrative reads only — no numeric scores, no comparative framing |
+| **D4: mastery model shape** | D3, D4, E1–E5 | What is a `MasteryRecord`? Attempts, outcomes, dominant error pattern per concept |
+| **N6: school validation call** | E (whole epic) | Confirm device access in class and homework policy by year group before Epic E is built |
+| **B5: participation mechanics** | B5, B6 | Reminder timing, definition of completion, behaviour at low participation |
+| **B6: coverage threshold** | B6 | Below threshold the card states low coverage, not a class-level claim |
+
+---
 
 ## Decisions Made
 
-- **Multi-tenancy**: row-level `school_id` FK on all student/teacher/school tables (confirmed via db-migrations skill)
-- **Stack**: Python/FastAPI + PostgreSQL + SQLAlchemy + Alembic + pytest-asyncio (confirmed via skills)
-- **Auth**: custom JWT (python-jose + bcrypt), 6h expiry, payload carries user_id + school_id + role
-- **Docker DB**: postgres:16-alpine, container name `rafiqi-db`, port 5432, creds rafiqi/rafiqi, migration applied
+- **Multi-tenancy**: row-level `school_id` FK on all student/teacher/school tables
+- **Stack**: Python/FastAPI + PostgreSQL + SQLAlchemy + Alembic + pytest-asyncio
+- **Auth**: custom JWT, 6h expiry, payload carries user_id + school_id + role
+- **Docker DB**: postgres:16-alpine, port 5432
+- **Epic C**: deferred to v2 — no realtime infrastructure in v1
+- **E3 format constraint**: self-checking formats only (single correct answer, MCQ, spot-the-error) — no human marking required
+- **Visible differentiation (E3)**: same item count and presentation across class; variation in scaffolding and concept focus only — no student-visible difficulty label
+- **Trust principle (B3, A5, A9, E4)**: Rafiqi proposes, the human decides — applies everywhere

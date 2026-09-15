@@ -2,9 +2,9 @@
 
 This file gives Claude Code full context on Rafiqi and the EntraI venture it belongs to. Read this before working on any part of the codebase.
 
-**Source of truth**: where the engineering ticket plan (`docs/rafiqi-engineering-plan-simplified.md`) 
+**Source of truth**: `docs/artifact.md` — the reviewed and revised MVP engineering plan (Revision 2, Younis, 2026-09-15). This supersedes the original `docs/rafiqi-engineering-plan-simplified.md`. Read `docs/artifact.md` before any ticket work.
 
-**Companion file**: `docs/Rafiqi-big-plan.md` holds the long-term/full-complexity vision (multi-turn Socratic dialogue, misconception taxonomy, homework personalization, deferred mockup screens, etc.). It is NOT auto-loaded by Claude Code and is not current build scope — only read it if explicitly asked to plan toward it. This file (the MVP ticket plan) is what to build against by default.
+**Companion file**: `docs/Rafiqi-big-plan.md` holds the long-term vision. It is NOT auto-loaded and is not current build scope — only read it if explicitly asked to plan toward it.
 
 
 ## The product: Rafiqi (a.k.a. "Rafiqi" in the mockup and tickets)
@@ -16,10 +16,13 @@ Education app for schools, teachers, and students. First priority build to  catc
 - **PDPL (Saudi Personal Data Protection Law)** applies — fully enforced since Sept 2024, regulator is SDAIA. A DPO is mandatory for orgs processing data of children/vulnerable individuals, which this product does by definition. Cross-border data transfer requires documented safeguards if infra isn't hosted in KSA. Get compliance/legal input before the first real school rollout.
 - This maps directly onto ticket A8 (privacy review) — see below. Do it early, not as a launch afterthought.
 
-## MVP scope (current — per engineering ticket plan)
+## MVP scope (Revision 2 — per `docs/artifact.md`)
 
-**In scope**, for both teacher and student: **Student Profile, Pre-Class, During-Class.**
-**Explicitly out of scope for now**: everything else shown in the original mockup — Homework, Study Cave (beyond what Pre-Class covers), Companions, Resources, Development Club, Growth Dashboard. Do not build these unless scope is revisited.
+**In scope**: **Epic A** (Student Profile), **Epic B** (Pre-Class), **Epic D** (Study Sessions), **Epic E** (Homework Generation).
+**Explicitly deferred to v2**: **Epic C** (During-Class / live engagement). Do not build any realtime infrastructure.
+**Out of scope**: human marking, open-response homework, group/peer study, anything realtime.
+
+The product spine is: **Study → Profile → Prep + Homework → Study** — a closed loop that runs entirely outside class hours.
 
 ### Epic A — Student Profile
 
@@ -55,21 +58,38 @@ Education app for schools, teachers, and students. First priority build to  catc
 - **C7 (nice-to-have)** — Rafiqi notices if a student's own notes already answer a question they raised, and tells them.
 - **C8 (Foundation)** — when a session ends, freeze/lock the engagement and question data so after-class summaries and profile updates can consume it without it changing underneath them.
 
-### Suggested build order (per ticket plan)
-1. Foundations: A1, A2, B1, C1, C2
-2. Profile loop end-to-end: A3 → A6 → A7
-3. Pre-class loop: B2/B3 → B5 → B6/B7
-4. Live-class loop: C3 → C4 → C5 → C6
-5. Don't leave for later: A5, A8 (privacy review)
-6. Nice-to-haves: A9, B4, B8, C7, C8
+### Build order (Revision 2 — from `docs/artifact.md` §7)
 
-## System design (needs revision against the ticket plan — not yet fully redone)
+```
+0. Decisions first (no code)   A8 answers · A3 promotion rule · A6 disclosure rule
+                               · D4 mastery model shape · N6 school validation call
+1. Foundations                 A1 · A2 · B1
+2. Profile loop + trust        A3 → A6 + A5 → A7 + A9
+3. Study loop                  D1 · D2 → D3 → D4 → D5 → D6
+4. Pre-class loop              B2/B3 → B5 + N4 → B6/B7
+5. The link                    N1  (profile digest into prep)
+6. Homework loop               E1 → E2 → E3 + E4 → E5
+7. Polish                      B4 · B8
+–  Live loop (v2 only)         C1 · C2 → C3 → C4 → C5 → C6 → C8
+```
 
-The design below was drafted before the ticket plan and covered only a single "Socratic diagnostic + digest" flow. It substantially undersells Epic C (live real-time system) and doesn't reflect A2/A3's continuous profile-building nature (ongoing, not one diagnostic session) or B5/B6's lighter prediction-game format. Treat this section as a starting point to be reworked, not final.
+**Hard rules from the review:**
+- A8 must be resolved before A1 is finalised — it determines the schema.
+- A5 ships alongside A6, never after.
+- D (study loop) comes before E (homework) — E consumes what D produces.
+- Trust mechanisms (A5, A9, E4) ship with the features they protect.
 
-**Original async flow (still roughly applicable to A2/A3 profile-building and B5/B6 pre-class)**: Student app → Conversation orchestrator → (LLM gateway + Student profile store) → downstream consumer (profile update for A3, or class-level aggregation for B6) → Teacher-facing view.
+## System design
 
-**Not yet designed**: the real-time layer for Epic C (C2 in particular) — this needs its own design pass: likely a WebSocket/pub-sub service separate from the LLM-facing orchestrator, since live engagement sync (C3, C5) has very different latency/reliability requirements than an LLM call.
+**Async flow (v1):** Student app → Conversation orchestrator → (LLM gateway + Student profile store + MasteryRecord store) → downstream consumers (A3 profile update, D4 mastery update, B6/E2 class aggregation) → Teacher-facing view.
+
+No realtime layer in v1. Epic C is deferred; 
+
+**New in Revision 2:** The data model has two distinct halves:
+- **Who the student is** — traits, narrative reads (`StudentProfile`, `ProfileTrait`)
+- **What the student understands** — concept-level mastery (`MasteryRecord`, `Attempt`) — added by D3/D4
+
+Both are queryable per student and aggregatable per `ClassGroup`. The LLM is stateless per call — context engineering from these two stores drives personalisation.
 
 ### Conversation orchestrator (still applicable to A2/A3 and B5)
 Per turn: assembles context (student's existing profile state for A2/A3, or today's lesson topic for B5) → calls LLM gateway → for A2/A3, extracts/updates trait data with a confidence label (per A3); for B5, is likely a simpler prediction-question flow rather than the multi-turn Socratic loop originally assumed — confirm scope before building the guardrail-heavy version.
@@ -88,11 +108,11 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 
 ## Known open risks / challenges to keep front of mind
 
-**Technical**: curriculum content-ops lift (KSA-aligned), Arabic dialogue quality (generally weaker than English across most models — needs explicit testing, not assumed), multi-tenant data isolation, cost control at scale, classroom wifi reliability (now more critical given Epic C is real-time), mobile/tablet UX (small-screen conversational UI, voice input for younger students, shared-device session switching), and — new — real-time infrastructure reliability for Epic C (C2 is a hard dependency for C3-C6).
+**Technical**: curriculum content-ops lift (KSA-aligned), Arabic dialogue quality (generally weaker than English — needs explicit testing), multi-tenant data isolation, cost control at scale, mobile/tablet UX (small-screen conversational UI, voice input for younger students, shared-device session switching). Realtime infrastructure risk is removed for v1.
 
-**Non-technical**: school procurement cycles are slow (paid trial ≠ guaranteed rollout), teacher adoption/trust (must feel like help, not surveillance — especially relevant to C3's "who's checked out" live monitoring), need real teacher/curriculum validation of B6's misconception grouping, parent/regulator trust re: AI talking to children, renewal depends on demonstrated outcomes not novelty.
+**Non-technical**: school procurement cycles are slow (paid trial ≠ guaranteed rollout), teacher adoption/trust (must feel like help, not assessment), homework policy varies by school and year group (X6 — validate before Epic E), parent/regulator trust re: AI talking to children and sending output to the home (widened compliance surface per A8 Revised), renewal depends on demonstrated outcomes.
 
-**AI-specific**: keeping A2/A3 profile extraction accurate and appropriately scoped (per A8's privacy constraint on what can even be saved), PDPL/minors'-data compliance, model routing/cost, confidence-labeling logic for profile traits, hallucination risk on academic content in B2's generated lesson prep, Arabic vs English quality gap, evaluation without ground truth, safety guardrails for content aimed at minors.
+**AI-specific**: A2/A3 profile extraction accuracy and scope (A8 constrains what can be stored), PDPL/minors'-data compliance (now covers performance data and parent-visible output), A3 output stability (same transcript → same updates), D3 error taxonomy design, hallucination risk on academic content (B2 lesson prep, E3 homework generation), Arabic vs English quality gap, safety guardrails for minors.
 
 ## Tech Stack (confirmed 2026-09-12)
 
@@ -106,7 +126,7 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - **LLM**: Claude (Haiku-class for high-volume cheap tier: A2 chat, B2 draft, B5 prompts; stronger model for lower-volume synthesis: B6 misconception summary)
 - **Auth**: not yet decided — to be confirmed before A2 (first route that needs it)
 - **Hosting/infra**: not yet decided — PDPL KSA data residency requirement must be resolved before first school rollout
-- **Real-time (Epic C)**: not yet decided — WebSocket vs. SSE vs. third-party pub-sub; must be chosen before C2
+- **Real-time**: not required for v1 — Epic C is deferred
 
 ## Notes for Claude Code
 
