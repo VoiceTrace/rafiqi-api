@@ -15,7 +15,7 @@
 
 ## Current State
 
-**A1 + Auth complete. DB running.** 26/26 tests green.
+**A1 + Auth (incl. refresh/logout) complete. DB running.** 54/54 tests green.
 
 > **Before starting A2:** A8 decisions must be made (see Open Decisions below). A8 now covers performance data (D3/D4) and parent-visible output (E3) in addition to the original profile data scope.
 
@@ -37,6 +37,26 @@
 - STATUS.md updated to reflect new scope and open decisions
 - Epic C fully deferred; Epics D and E added to plan
 
+### Session 3 (2026-09-21) — JWT refresh + logout
+- Found role-based auth (teacher/student, `require_teacher`/`require_student` deps) and JWT
+  login already in place from a prior session's `A-USER` work — no new role system needed.
+- Real gap found in the existing JWT flow: access tokens were trusted purely from their
+  signature, with no DB check — a deactivated user's token stayed valid for the full 6h
+  lifetime instead of losing access immediately.
+- Added a `refresh_tokens` table (hashed opaque tokens, revocable, one row per issued
+  refresh token) and `POST /auth/refresh` / `POST /auth/logout` routes.
+- Shortened access tokens from 6h to `ACCESS_TOKEN_EXPIRE_MINUTES` (30 min) now that a
+  refresh token covers the long-lived session — this shrinks (but doesn't close) the
+  deactivation-lag window found above, since refresh itself now re-checks `is_active`.
+  Immediate access-token revocation on deactivation is still open — see Open Decisions.
+- Refresh tokens rotate on every use (old one revoked, new one issued) so replaying a
+  stolen-then-already-used refresh token is rejected.
+- `alembic upgrade head` verified clean against a throwaway Postgres container (the
+  project's own `docker-compose` `rafiqi-db` port conflicted with a system-wide
+  `postgresql@12` service already bound to 5432 in this environment — worth the team
+  knowing about if it hits others), `alembic check` confirms no model/migration drift.
+- Full suite: 54/54 passing.
+
 ---
 
 ## Tech Stack
@@ -49,7 +69,7 @@
 - **Testing**: pytest + pytest-asyncio + httpx.AsyncClient
 - **Multi-tenancy**: row-level `school_id` scoping on all student/teacher/school tables
 - **LLM gateway**: Claude (Haiku-class for high-volume cheap tier, stronger model for synthesis)
-- **Auth**: custom JWT (python-jose + bcrypt), 6h expiry, payload carries user_id + school_id + role
+- **Auth**: custom JWT access token (30 min, python-jose + bcrypt) + rotating opaque refresh token (30 days, DB-backed, revocable via logout), payload carries user_id + school_id + role
 - **Docker DB**: postgres:16-alpine, container name `rafiqi-db`, port 5432
 
 **Still open:**
@@ -111,6 +131,7 @@
 | **N6: school validation call** | E (whole epic) | Confirm device access in class and homework policy by year group before Epic E is built |
 | **B5: participation mechanics** | B5, B6 | Reminder timing, definition of completion, behaviour at low participation |
 | **B6: coverage threshold** | B6 | Below threshold the card states low coverage, not a class-level claim |
+| **Auth: immediate access-token revocation** | hardening, not a ticket blocker | Access tokens (30 min) are still trusted purely from their signature — a deactivated user keeps API access for up to 30 min. Closing fully needs a per-request active-user check (DB hit or cache) traded against latency; refresh already re-checks `is_active`, which caps real exposure at the access-token lifetime. Revisit if PDPL/A8 review calls for stricter immediacy |
 
 ---
 
@@ -118,7 +139,7 @@
 
 - **Multi-tenancy**: row-level `school_id` FK on all student/teacher/school tables
 - **Stack**: Python/FastAPI + PostgreSQL + SQLAlchemy + Alembic + pytest-asyncio
-- **Auth**: custom JWT, 6h expiry, payload carries user_id + school_id + role
+- **Auth**: custom JWT access token (30 min) + rotating refresh token (30 days), payload carries user_id + school_id + role
 - **Docker DB**: postgres:16-alpine, port 5432
 - **Epic C**: deferred to v2 — no realtime infrastructure in v1
 - **E3 format constraint**: self-checking formats only (single correct answer, MCQ, spot-the-error) — no human marking required

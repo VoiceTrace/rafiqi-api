@@ -11,7 +11,7 @@ Backend for Rafiqi — an education app for teachers and students, built for the
 | Database | PostgreSQL 16 |
 | ORM | SQLAlchemy 2 (async) |
 | Migrations | Alembic |
-| Auth | JWT (python-jose + bcrypt), 6h expiry |
+| Auth | JWT access token (30 min) + rotating refresh token (30 days) |
 | Testing | pytest + pytest-asyncio + httpx |
 
 ## Prerequisites
@@ -128,7 +128,9 @@ tests/
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | None | Health check |
-| POST | `/auth/login` | None | Login — returns JWT |
+| POST | `/auth/login` | None | Login — returns access + refresh token |
+| POST | `/auth/refresh` | None | Exchange a refresh token for a new pair |
+| POST | `/auth/logout` | None | Revoke a refresh token |
 
 More endpoints added per ticket. See `.claude/STATUS.md` for current build progress.
 
@@ -140,7 +142,17 @@ All protected routes require a `Bearer` token in the `Authorization` header:
 Authorization: Bearer <token>
 ```
 
-The JWT payload carries `sub` (user ID), `school_id`, `role`, and `exp`. Tokens expire after 6 hours.
+The JWT payload carries `sub` (user ID), `school_id`, `role`, and `exp`. Access tokens
+expire after `ACCESS_TOKEN_EXPIRE_MINUTES` (default 30 min).
+
+Login also returns an opaque `refresh_token` (not a JWT, stored hashed in the
+`refresh_tokens` table). When the access token expires, call `POST /auth/refresh`
+with it to get a new pair — the refresh token rotates on every use, so a reused
+(stolen or already-exchanged) refresh token is rejected. It's valid for
+`REFRESH_TOKEN_EXPIRE_DAYS` (default 30 days) unless revoked sooner via
+`POST /auth/logout`. Logging out only revokes the refresh token; any access token
+already issued keeps working until it naturally expires, which is why the access
+token is kept short-lived.
 
 ## Multi-tenancy
 
@@ -154,5 +166,6 @@ Every table holding student, teacher, or school data has a `school_id` column. A
 | `DATABASE_URL_SYNC` | `postgresql+psycopg2://...` | Sync DB URL (Alembic) |
 | `SECRET_KEY` | `change-me-in-production` | JWT signing key |
 | `ALGORITHM` | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_HOURS` | `6` | Token lifetime |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access token lifetime |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token lifetime |
 | `ENVIRONMENT` | `development` | `development` or `production` |
