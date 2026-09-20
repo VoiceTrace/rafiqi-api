@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, users
+from app.api.routes import auth, study_sessions, users
 from app.core.config import settings
 
 description = """
@@ -83,6 +83,13 @@ tags_metadata = [
         "description": "Lesson prep — objectives, flow, check-questions (B1/B2/B3).",
     },
     {
+        "name": "study-sessions",
+        "description": "Epic D — Student study sessions with Rafiqi. "
+                       "State machine: setup → review → check_in → deepen → wrap_up → closed. "
+                       "Generates questions, captures attempts, scores with hint ladder, "
+                       "computes mastery records on close.",
+    },
+    {
         "name": "sessions",
         "description": "Live class sessions — start, join, real-time sync (C1/C2).",
     },
@@ -113,6 +120,7 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(study_sessions.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 

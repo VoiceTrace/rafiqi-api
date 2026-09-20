@@ -28,28 +28,23 @@ class AttemptStage(StrEnum):
 
 
 class ErrorType(StrEnum):
-    """Taxonomy of error types for Attempt classification. Subject-agnostic for MVP."""
-    CONCEPTUAL_GAP = "conceptual_gap"       # doesn't understand the concept
-    APPLICATION_ERROR = "application_error" # understands concept, can't apply it
-    MISCONCEPTION = "misconception"         # actively wrong mental model
-    RECALL_ERROR = "recall_error"           # couldn't remember the fact
-    CALCULATION_ERROR = "calculation_error" # process right, arithmetic wrong
+    CONCEPTUAL_GAP = "conceptual_gap"
+    APPLICATION_ERROR = "application_error"
+    MISCONCEPTION = "misconception"
+    RECALL_ERROR = "recall_error"
+    CALCULATION_ERROR = "calculation_error"
 
 
 class MasteryConfidence(StrEnum):
-    FORMING = "forming"         # mastery_level < 0.4
-    DEVELOPING = "developing"   # 0.4 <= mastery_level < 0.75
-    SOLID = "solid"             # mastery_level >= 0.75
+    FORMING = "forming"       # mastery_level < 0.4
+    DEVELOPING = "developing" # 0.4 <= mastery_level < 0.75
+    SOLID = "solid"           # mastery_level >= 0.75
 
 
 class StudySession(Base):
     """
-    One session per student per lesson attempt.
-    Multiple sessions on the same lesson are distinguishable and resumable.
-
-    current_stage tracks the session phase (setup → review → check_in → deepen → wrap_up).
-    current_concept_index tracks which concept in concepts_order is currently active,
-    so sessions survive interruption and can resume exactly where they left off.
+    One per student per lesson attempt. Resumable — current_stage +
+    current_concept_index + concepts_order together track exact position.
     """
 
     __tablename__ = "study_sessions"
@@ -61,26 +56,20 @@ class StudySession(Base):
     student_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # lesson_id stored as string until B1 adds a lessons table; add FK constraint then
+    # String until B1 adds a lessons table; add FK constraint then
     lesson_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
 
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=SessionStatus.OPEN
-    )
-    current_stage: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=SessionStage.SETUP
-    )
-    # Zero-indexed position in concepts_order; drives resumption after interruption
-    current_concept_index: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
-    # Ordered list of concept_refs for this session, e.g. ["newton_3rd_law", "momentum"]
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=SessionStatus.OPEN)
+    current_stage: Mapped[str] = mapped_column(String(20), nullable=False, default=SessionStage.SETUP)
+    current_concept_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Ordered concept_ref list set by Rafiqi.plan_session(); drives current_concept_index
     concepts_order: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    # Populated at D6 session close — summary shown to student
+    # Populated at D6 session close — student-facing summary
     summary_card: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # B5 wire-up: warmup response IDs that seeded this session's gap list (nullable until B5 exists)
+    # B5 wire-up: warmup response IDs that seeded gap list (nullable until B5 exists)
     gap_seed_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(
@@ -88,30 +77,22 @@ class StudySession(Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    attempts: Mapped[list["Attempt"]] = relationship(
+    questions: Mapped[list["Question"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
 
 
-class Attempt(Base):
+class Question(Base):
     """
-    One row per question-answer exchange during a study session.
-
-    student_response is stored in full so Rafiqi can be trained on real student language
-    and so future sessions can give richer context to the LLM.
-
-    correctness_score (0.0–1.0) allows partial credit rather than a binary pass/fail.
-    error_type is only meaningful when correctness_score < 0.8; null means correct.
-    hint_level records how much help the student needed — signal for mastery_level weighting.
+    One row per question Rafiqi generates. All retries (Attempts) link back
+    to the same Question via FK — no duplication of question_text across retries.
+    internal_answer_key is owned by Rafiqi, stored here, and never sent to the student.
     """
 
-    __tablename__ = "attempts"
+    __tablename__ = "questions"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(
@@ -123,13 +104,49 @@ class Attempt(Base):
     student_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    lesson_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Must always have a concept reference — never stored without one (D3 hard requirement)
-    concept_ref: Mapped[str] = mapped_column(String(200), nullable=False)
 
+    # Must always have a concept reference — never stored without one (D3 hard rule)
+    concept_ref: Mapped[str] = mapped_column(String(200), nullable=False)
     stage: Mapped[str] = mapped_column(String(20), nullable=False)  # AttemptStage
 
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Owned by Rafiqi — used internally for scoring and hints, never exposed to student
+    internal_answer_key: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session: Mapped["StudySession"] = relationship(back_populates="questions")
+    attempts: Mapped[list["Attempt"]] = relationship(
+        back_populates="question", cascade="all, delete-orphan"
+    )
+
+
+class Attempt(Base):
+    """
+    One row per student answer. All retries on the same question share one Question
+    row via question_id FK.
+
+    correctness_score (0.0–1.0): partial credit, not binary.
+    error_type: from ErrorType taxonomy; null when score >= 0.8 (correct).
+    hint_level: how much help was shown before this attempt (signal for mastery weighting).
+    student_response stored in full for future Rafiqi training context.
+    """
+
+    __tablename__ = "attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     student_response: Mapped[str] = mapped_column(Text, nullable=False)
 
     # 0.0 = fully wrong, 1.0 = fully correct, 0.5 = partial credit
@@ -138,31 +155,28 @@ class Attempt(Base):
     # Null when correct (score >= 0.8); set from ErrorType taxonomy otherwise
     error_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    # 0 = no hint shown, 1 = small hint, 2 = large hint, 3 = answer revealed
+    # 0 = no hint shown before this attempt, 3 = answer was revealed
     hint_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # 1st, 2nd, or 3rd attempt on this concept in this stage
+    # Which attempt on this question (1st, 2nd, 3rd)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    session: Mapped["StudySession"] = relationship(back_populates="attempts")
+    question: Mapped["Question"] = relationship(back_populates="attempts")
 
 
 class MasteryRecord(Base):
     """
     Concept-level understanding per student per lesson.
-    Not a grade: attempts, outcomes, and the dominant error pattern.
-    Populated (and updated) by D6 session close; consumed by Epic E homework generation.
+    Populated at D6 session close by aggregating Attempt → Question → StudySession.
+    Consumed by Epic E homework generation.
 
     mastery_level formula (D4 decision):
-      weighted_correct = sum(
-          1.0 if hint=0 and correct,
-          0.7 if hint=1 and correct,
-          0.4 if hint=2 and correct,
-          0.1 if hint=3 and correct  (answer was revealed)
-      ) / attempt_count
+      weighted_sum = Σ weight(hint_level) * correctness_score per attempt
+      mastery_level = weighted_sum / attempt_count
+      weights: hint=0 → 1.0, hint=1 → 0.7, hint=2 → 0.4, hint=3 → 0.1
     Thresholds: < 0.4 → forming, 0.4–0.75 → developing, >= 0.75 → solid
     """
 
@@ -181,24 +195,19 @@ class MasteryRecord(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     correct_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # Weighted formula defined in docstring above; drives confidence label
+    # Weighted formula defined in docstring; drives confidence label
     mastery_level: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
-    # Most common error type across all attempts on this concept; null if all correct
+    # Most common error type across attempts; null if always correct
     dominant_error_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     confidence: Mapped[str] = mapped_column(
         String(20), nullable=False, default=MasteryConfidence.FORMING
     )
 
-    last_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     __table_args__ = (
