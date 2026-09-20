@@ -20,7 +20,9 @@ All protected endpoints require a Bearer token in the `Authorization` header:
 Authorization: Bearer <access_token>
 ```
 
-Obtain a token by calling **POST /auth/login**. Tokens expire after **6 hours**.
+Obtain a token pair by calling **POST /auth/login**. Access tokens are short-lived —
+exchange the accompanying `refresh_token` for a new pair via **POST /auth/refresh**
+rather than logging in again. Call **POST /auth/logout** to revoke a refresh token.
 
 ### Multi-tenancy
 
