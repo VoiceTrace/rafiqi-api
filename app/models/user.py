@@ -38,3 +38,6 @@ class User(Base):
         back_populates="user", uselist=False
     )
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="student")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )

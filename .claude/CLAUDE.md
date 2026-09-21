@@ -124,7 +124,7 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - **API conventions**: see `.claude/skills/fastapi-conventions/SKILL.md`
 - **Multi-tenancy**: row-level `school_id` FK on every student/teacher/school table — hard rule, not optional
 - **LLM**: Claude (Haiku-class for high-volume cheap tier: A2 chat, B2 draft, B5 prompts; stronger model for lower-volume synthesis: B6 misconception summary)
-- **Auth**: not yet decided — to be confirmed before A2 (first route that needs it)
+- **Auth**: custom JWT — access token (30 min, python-jose + bcrypt) + rotating opaque refresh token (30 days, hashed at rest, revocable via `POST /auth/logout`), payload carries user_id + school_id + role. Two roles today: `teacher`, `student`, enforced via `require_teacher`/`require_student` deps in `app/api/deps.py`. Known open item: a still-valid access token isn't revoked immediately on user deactivation (bounded to the 30 min access-token lifetime, since refresh already re-checks `is_active`) — see `.claude/STATUS.md` Open Decisions if closing this fully becomes a priority.
 - **Hosting/infra**: not yet decided — PDPL KSA data residency requirement must be resolved before first school rollout
 - **Real-time**: not required for v1 — Epic C is deferred
 
