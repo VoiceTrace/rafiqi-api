@@ -4,6 +4,12 @@ from app.models.profile import StudentProfile, ProfileTrait
 from app.models.conversation import Conversation
 from app.models.refresh_token import RefreshToken
 from app.models.study_session import StudySession, Question, Attempt, MasteryRecord
+from app.models.homework import (
+    HomeworkAssignment,
+    HomeworkQuestion,
+    StudentAssignment,
+    HomeworkAttempt,
+)
 
 __all__ = [
     "School",
@@ -16,4 +22,8 @@ __all__ = [
     "Question",
     "Attempt",
     "MasteryRecord",
+    "HomeworkAssignment",
+    "HomeworkQuestion",
+    "StudentAssignment",
+    "HomeworkAttempt",
 ]

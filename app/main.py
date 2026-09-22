@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, study_sessions, users
+from app.api.routes import auth, homework, study_sessions, users
 from app.core.config import settings
 
 description = """
@@ -92,6 +92,14 @@ tags_metadata = [
                        "computes mastery records on close.",
     },
     {
+        "name": "homework",
+        "description": "Epic E — Homework assignments. "
+                       "Teachers create MCQ assignments, add questions, and bulk-distribute to students. "
+                       "Students retrieve their assignments (no correct answers until submitted) and submit answers. "
+                       "Submission reveals correct answers and writes mastery records. "
+                       "Gap-digest endpoint aggregates class-level concept weaknesses for the teacher.",
+    },
+    {
         "name": "sessions",
         "description": "Live class sessions — start, join, real-time sync (C1/C2).",
     },
@@ -123,6 +131,7 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(study_sessions.router)
+app.include_router(homework.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
