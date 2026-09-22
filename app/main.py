@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, users
+from app.api.routes import auth, users, review
 from app.core.config import settings
 
 description = """
@@ -115,6 +115,7 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(review.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
