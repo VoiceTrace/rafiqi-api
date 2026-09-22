@@ -27,3 +27,5 @@ __all__ = [
     "StudentAssignment",
     "HomeworkAttempt",
 ]
+from app.models.review import ReviewLesson, ReviewSession
+__all__ += ["ReviewLesson", "ReviewSession"]
