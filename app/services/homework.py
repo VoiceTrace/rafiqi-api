@@ -77,7 +77,11 @@ def _bad_request(msg: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": {"code": "bad_request", "message": msg}})
 
 
-def _assignment_to_read(a: HomeworkAssignment) -> AssignmentRead:
+def _assignment_to_read(a: HomeworkAssignment, question_count: int | None = None) -> AssignmentRead:
+    # question_count must be passed explicitly when calling after commit() — accessing
+    # a.questions after commit triggers a lazy load in sync context (MissingGreenlet).
+    if question_count is None:
+        question_count = len(a.questions) if a.questions else 0
     return AssignmentRead(
         id=a.id,
         school_id=a.school_id,
@@ -89,7 +93,7 @@ def _assignment_to_read(a: HomeworkAssignment) -> AssignmentRead:
         due_at=a.due_at,
         created_at=a.created_at,
         updated_at=a.updated_at,
-        question_count=len(a.questions) if a.questions else 0,
+        question_count=question_count,
     )
 
 
@@ -145,9 +149,23 @@ async def create_assignment(
     )
     db.add(a)
     await db.flush()
+    await db.commit()
     await db.refresh(a)
-    a.questions = []
-    return _assignment_to_read(a)
+    # Do not access a.questions here — refresh expires relationships and
+    # touching the collection triggers a lazy load outside async context.
+    return AssignmentRead(
+        id=a.id,
+        school_id=a.school_id,
+        teacher_id=a.teacher_id,
+        lesson_id=a.lesson_id,
+        title=a.title,
+        description=a.description,
+        status=a.status,
+        due_at=a.due_at,
+        created_at=a.created_at,
+        updated_at=a.updated_at,
+        question_count=0,
+    )
 
 
 async def list_assignments(
@@ -223,8 +241,11 @@ async def update_assignment(
         a.description = req.description
     if req.due_at is not None:
         a.due_at = req.due_at
+    q_count = len(a.questions) if a.questions else 0
     await db.flush()
-    return _assignment_to_read(a)
+    await db.commit()
+    await db.refresh(a)
+    return _assignment_to_read(a, question_count=q_count)
 
 
 async def delete_assignment(
@@ -246,6 +267,7 @@ async def delete_assignment(
     if a.status != AssignmentStatus.draft:
         raise _conflict("Only draft assignments can be deleted")
     await db.delete(a)
+    await db.commit()
 
 
 # ── Teacher: question CRUD ────────────────────────────────────────────────────
@@ -296,6 +318,7 @@ async def add_question(
     )
     db.add(q)
     await db.flush()
+    await db.commit()
     await db.refresh(q)
     return _question_to_teacher_read(q)
 
@@ -334,6 +357,7 @@ async def update_question(
     if req.order is not None:
         q.order = req.order
     await db.flush()
+    await db.commit()
     return _question_to_teacher_read(q)
 
 
@@ -357,6 +381,7 @@ async def delete_question(
     if q is None:
         raise _not_found("Question not found")
     await db.delete(q)
+    await db.commit()
 
 
 # ── Teacher: distribute ───────────────────────────────────────────────────────
@@ -402,8 +427,11 @@ async def distribute_assignment(
         db.add(sa)
 
     a.status = AssignmentStatus.distributed
+    q_count = len(a.questions) if a.questions else 0
     await db.flush()
-    return _assignment_to_read(a)
+    await db.commit()
+    await db.refresh(a)
+    return _assignment_to_read(a, question_count=q_count)
 
 
 # ── Teacher: gap digest (E2) ──────────────────────────────────────────────────
@@ -626,6 +654,7 @@ async def submit_homework(
     await _update_mastery_from_homework(db, student_id, school_id, sa.assignment, questions, results)
 
     await db.flush()
+    await db.commit()
     return SubmissionResult(
         student_assignment_id=student_assignment_id,
         score=overall_score,
