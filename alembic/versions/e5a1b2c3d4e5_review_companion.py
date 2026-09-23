@@ -9,7 +9,10 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "e5a1b2c3d4e5"
-down_revision = "d4e6a2c9f1b7"
+# E1 extends the auth migration chain with the study-session/homework tables.
+# Keep review migrations on the single application head when this slice is
+# integrated with the E1 backend.
+down_revision = "e1f2a3b4c5d6"
 branch_labels = None
 depends_on = None
 
