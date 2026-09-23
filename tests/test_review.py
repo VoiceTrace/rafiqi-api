@@ -17,9 +17,9 @@ from app.core.database import Base
 from app.core.security import create_access_token
 from app.main import app
 from app.models import School, User
-from app.models.review import ReviewAttempt, ReviewLesson, ReviewSession
+from app.models.review import MasteryRecord, ReviewAttempt, ReviewLesson, ReviewSession
 from app.schemas.review import ReviewMessage
-from app.services.review import ReviewError, apply_message, initial_state, session_public
+from app.services.review import ReviewError, apply_message, initial_state, mastery_band, session_public
 from app.services.review_seed import LESSON
 from app.services.review_catalog import seed_catalog
 from app.services.review_assessment import AssessmentMetadataError, classify_error
@@ -94,10 +94,19 @@ def test_subject_error_taxonomy_is_stable_and_requires_concepts():
         classify_error(subject_id="physics", question=without_concept, option_id="equal", score=1)
 
 
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [(0, "needs_support"), (0.49, "needs_support"), (0.5, "developing"),
+     (0.79, "developing"), (0.8, "secure"), (1, "secure")],
+)
+def test_mvp_mastery_band_boundaries(score, expected):
+    assert mastery_band(score) == expected
+
+
 @pytest.mark.asyncio
 async def test_role_gate_without_dependency_override():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        for path in ("/study-lessons", "/study-subjects", "/study-subjects/physics/chapters"):
+        for path in ("/study-lessons", "/study-subjects", "/study-subjects/physics/chapters", "/study-mastery"):
             assert (await client.get(path)).status_code in (401, 403)
         token = create_access_token(uuid.uuid4(), uuid.uuid4(), "teacher")
         assert (await client.get("/study-lessons", headers={"Authorization": f"Bearer {token}"})).status_code == 403
@@ -201,6 +210,68 @@ async def test_attempt_capture_is_idempotent_scoped_and_taxonomy_backed(api):
 
     identity["user"] = CurrentUser(other_id, identity["user"].school_id, "student")
     assert (await client.get(f"/study-sessions/{session['id']}/attempts")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_mastery_recalculates_from_latest_question_evidence(api):
+    client, identity, other_id, factory = api
+    session = (await client.post("/study-sessions", json={"lesson_id": "balanced-forces"})).json()
+
+    wrong = command("answer", question="balanced-forces-check", option_id="other")
+    assert (await client.post(f"/study-sessions/{session['id']}/messages", json=wrong)).status_code == 200
+    first = (await client.get("/study-mastery")).json()
+    assert len(first) == 1
+    record = first[0]
+    assert record["subject_id"] == "physics"
+    assert record["concept_ref"] == "net-force"
+    assert record["mastery_score"] == 0
+    assert record["mastery_band"] == "needs_support"
+    assert record["evidence_count"] == 1
+    assert record["attempt_count"] == 1
+    assert record["dominant_error_type"] == "balanced_force_means_stopped"
+    assert record["calculation_version"] == "mvp-v1"
+
+    correct = command("answer", version=1, question="balanced-forces-check", option_id="correct")
+    assert (await client.post(f"/study-sessions/{session['id']}/messages", json=correct)).status_code == 200
+    revised = (await client.get("/study-mastery")).json()[0]
+    assert revised["id"] == record["id"]
+    assert revised["mastery_score"] == 1
+    assert revised["mastery_band"] == "secure"
+    assert revised["evidence_count"] == 1
+    assert revised["attempt_count"] == 2
+    assert revised["dominant_error_type"] is None
+
+    async with factory() as db:
+        stored = (await db.execute(select(MasteryRecord))).scalars().all()
+        assert len(stored) == 1
+
+    identity["user"] = CurrentUser(other_id, identity["user"].school_id, "student")
+    assert (await client.get("/study-mastery")).json() == []
+    identity["user"] = CurrentUser(other_id, uuid.uuid4(), "student")
+    assert (await client.get("/study-mastery")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_mastery_averages_latest_evidence_per_question(api):
+    client, _, _, _ = api
+    session = (await client.post("/study-sessions", json={"lesson_id": "newton-third-law"})).json()
+    payloads = [
+        command("answer", option_id="equal"),
+        command("next", version=1),
+        command("answer", version=2, question="different-objects", text="different"),
+    ]
+    for payload in payloads:
+        response = await client.post(f"/study-sessions/{session['id']}/messages", json=payload)
+        assert response.status_code == 200, response.text
+
+    mastery = (await client.get("/study-mastery")).json()
+    assert len(mastery) == 1
+    assert mastery[0]["concept_ref"] == "action-reaction"
+    assert mastery[0]["mastery_score"] == 0.75
+    assert mastery[0]["mastery_band"] == "developing"
+    assert mastery[0]["evidence_count"] == 2
+    assert mastery[0]["attempt_count"] == 2
+    assert mastery[0]["dominant_error_type"] == "force_pair_incomplete_distinct_objects"
 
 
 @pytest.mark.asyncio
