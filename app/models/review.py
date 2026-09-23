@@ -74,3 +74,52 @@ class ReviewAttempt(Base):
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     locale: Mapped[str] = mapped_column(String(2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MasteryRecord(Base):
+    """Recomputable MVP summary of a student's evidence for one concept."""
+
+    __tablename__ = "mastery_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "school_id", "student_id", "subject_id", "concept_ref",
+            name="uq_mastery_student_concept",
+        ),
+        CheckConstraint("mastery_score >= 0 AND mastery_score <= 1", name="ck_mastery_score"),
+        CheckConstraint(
+            "mastery_band IN ('needs_support', 'developing', 'secure')",
+            name="ck_mastery_band",
+        ),
+        CheckConstraint("evidence_count >= 1", name="ck_mastery_evidence_count"),
+        CheckConstraint("attempt_count >= evidence_count", name="ck_mastery_attempt_count"),
+        CheckConstraint(
+            "assisted_evidence_count >= 0 AND assisted_evidence_count <= evidence_count",
+            name="ck_mastery_assisted_count",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[str] = mapped_column(
+        ForeignKey("review_subjects.id"), nullable=False, index=True
+    )
+    concept_ref: Mapped[str] = mapped_column(String(100), nullable=False)
+    mastery_score: Mapped[float] = mapped_column(Float, nullable=False)
+    mastery_band: Mapped[str] = mapped_column(String(20), nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    assisted_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    dominant_error_type: Mapped[str | None] = mapped_column(String(100))
+    calculation_version: Mapped[str] = mapped_column(String(20), nullable=False, default="mvp-v1")
+    last_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

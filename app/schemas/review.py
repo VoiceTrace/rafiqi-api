@@ -106,3 +106,21 @@ class AttemptOut(BaseModel):
     locale: Locale
     created_at: datetime
 
+
+class MasteryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    student_id: UUID
+    subject_id: str
+    concept_ref: str
+    mastery_score: float = Field(ge=0, le=1)
+    mastery_band: Literal["needs_support", "developing", "secure"]
+    evidence_count: int = Field(ge=1)
+    attempt_count: int = Field(ge=1)
+    assisted_evidence_count: int = Field(ge=0)
+    dominant_error_type: str | None
+    calculation_version: str
+    last_attempt_at: datetime
+    updated_at: datetime
+
