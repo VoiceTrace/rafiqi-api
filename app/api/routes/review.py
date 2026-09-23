@@ -1,92 +1,71 @@
 import uuid
 from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import CurrentUser, get_db_session, require_student
-from app.models.review import ReviewLesson, ReviewSession
-from app.schemas.review import CreateReview, Locale, ReviewMessage
-from app.services.review import apply_message, initial_state, lesson_public, session_public
+from app.core.errors import ErrorCode
+from app.schemas.review import CreateReview, LessonOut, Locale, ReviewMessage, SessionOut
+from app.services import review as svc
 
 router = APIRouter(tags=["study-review"])
 Student = Annotated[CurrentUser, Depends(require_student)]
 Database = Annotated[AsyncSession, Depends(get_db_session)]
 
-
-async def owned(db, user, session_id=None, lesson_id=None, lock=False):
-    stmt = select(ReviewSession).where(ReviewSession.school_id == user.school_id, ReviewSession.student_id == user.id)
-    stmt = stmt.where(ReviewSession.id == session_id) if session_id else stmt.where(ReviewSession.lesson_id == lesson_id)
-    if lock:
-        stmt = stmt.with_for_update()
-    return (await db.execute(stmt)).scalar_one_or_none()
+_ERROR_CODES = {404: ErrorCode.NOT_FOUND, 409: ErrorCode.CONFLICT, 422: ErrorCode.VALIDATION_ERROR}
 
 
-@router.get("/study-lessons")
-async def lessons(user: Student, db: Database, locale: Locale = "en"):
-    rows = (await db.execute(select(ReviewLesson).order_by(ReviewLesson.id))).scalars().all()
-    return [lesson_public(row.id, row.content, locale) for row in rows]
+def _http(error: svc.ReviewError) -> HTTPException:
+    code = _ERROR_CODES.get(error.status, ErrorCode.INTERNAL_ERROR)
+    return HTTPException(status_code=error.status, detail={"error": {"code": code, "message": error.message}})
 
 
-@router.get("/study-lessons/{lesson_id}")
-async def lesson(lesson_id: str, user: Student, db: Database, locale: Locale = "en"):
-    row = await db.get(ReviewLesson, lesson_id)
-    if not row:
-        raise HTTPException(404, "lesson_not_found")
-    return lesson_public(row.id, row.content, locale)
+@router.get("/study-lessons", response_model=list[LessonOut])
+async def lessons(user: Student, db: Database, locale: Locale = "en") -> list[LessonOut]:
+    return await svc.list_lessons(db, locale)
 
 
-@router.post("/study-sessions")
-async def create(body: CreateReview, user: Student, db: Database, response: Response, locale: Locale = "en"):
-    session = await owned(db, user, lesson_id=body.lesson_id)
-    if session:
-        return session_public(session, locale)
-    lesson = await db.get(ReviewLesson, body.lesson_id)
-    if not lesson:
-        raise HTTPException(404, "lesson_not_found")
-    session = ReviewSession(school_id=user.school_id, student_id=user.id, lesson_id=lesson.id,
-                            content=lesson.content, state=initial_state(), version=0)
-    db.add(session)
+@router.get("/study-lessons/{lesson_id}", response_model=LessonOut)
+async def lesson(lesson_id: str, user: Student, db: Database, locale: Locale = "en") -> LessonOut:
     try:
-        await db.commit()
-        await db.refresh(session)
+        return await svc.get_lesson(db, lesson_id, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
+
+
+@router.post("/study-sessions", response_model=SessionOut)
+async def create(
+    body: CreateReview, user: Student, db: Database, response: Response, locale: Locale = "en",
+) -> SessionOut:
+    try:
+        session, created = await svc.create_or_resume_session(db, user.id, user.school_id, body.lesson_id, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
+    if created:
         response.status_code = 201
-    except IntegrityError:
-        await db.rollback()
-        session = await owned(db, user, lesson_id=body.lesson_id)
-        if session is None:
-            raise
-    return session_public(session, locale)
+    return session
 
 
-@router.get("/study-sessions/by-lesson/{lesson_id}")
-async def by_lesson(lesson_id: str, user: Student, db: Database, locale: Locale = "en"):
-    session = await owned(db, user, lesson_id=lesson_id)
-    if not session:
-        raise HTTPException(404, "session_not_found")
-    return session_public(session, locale)
+@router.get("/study-sessions/by-lesson/{lesson_id}", response_model=SessionOut)
+async def by_lesson(lesson_id: str, user: Student, db: Database, locale: Locale = "en") -> SessionOut:
+    try:
+        return await svc.get_session_by_lesson(db, user.id, user.school_id, lesson_id, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
 
 
-@router.get("/study-sessions/{session_id}")
-async def get_session(session_id: uuid.UUID, user: Student, db: Database, locale: Locale = "en"):
-    session = await owned(db, user, session_id=session_id)
-    if not session:
-        raise HTTPException(404, "session_not_found")
-    return session_public(session, locale)
+@router.get("/study-sessions/{session_id}", response_model=SessionOut)
+async def get_session(session_id: uuid.UUID, user: Student, db: Database, locale: Locale = "en") -> SessionOut:
+    try:
+        return await svc.get_session(db, user.id, user.school_id, session_id, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
 
 
-@router.post("/study-sessions/{session_id}/messages")
-async def send_message(session_id: uuid.UUID, body: ReviewMessage, user: Student, db: Database):
-    session = await owned(db, user, session_id=session_id, lock=True)
-    if not session:
-        raise HTTPException(404, "session_not_found")
-    if str(body.request_id) in session.state["requests"]:
-        return session_public(session, body.locale)
-    if session.version != body.expected_version:
-        raise HTTPException(409, "stale_session")
-    session.state = apply_message(session.content, session.state, body)
-    session.version += 1
-    await db.commit()
-    await db.refresh(session)
-    return session_public(session, body.locale)
-
+@router.post("/study-sessions/{session_id}/messages", response_model=SessionOut)
+async def send_message(session_id: uuid.UUID, body: ReviewMessage, user: Student, db: Database) -> SessionOut:
+    try:
+        return await svc.process_message(db, user.id, user.school_id, session_id, body)
+    except svc.ReviewError as error:
+        raise _http(error)
