@@ -142,7 +142,7 @@ These are two different things wearing similar URLs. Either:
 
 **Question:** (a) or (b)? If (b), what is the migration story for `review_sessions` rows created before D3/D4 land?
 
-> **Answer:** The user authorized the persistent catalog and concept references, with AI remaining mock. No decision was made here to declare full Epic D compatibility or throw away pilot records. This change preserves existing sessions and adds known concept metadata; production assessment migration remains a separate decision.
+> **Answer:** Foundation for the seeded MVP study loop. The user confirmed that pre-MVP database contents do not need migration or backfill; environments start from migrations plus seed data. The deterministic assessor remains replaceable, while D3 attempts and D4 mastery records are persistent foundations. One permanent session per lesson remains an intentional MVP difference from the full D1 design.
 
 ---
 
@@ -170,7 +170,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** This is a product-shape decision, not an implementation one, and it's blocking. Who owns it and when is it needed by? If it lands while this mock is in pilot, does the mock start writing to it, or stay isolated per B1?
 
-> **Answer:** Still out of scope. No mastery record is written from mock scores. Product owner and delivery date are not specified by the current request.
+> **Answer:** Completed for the MVP. The approved `mvp-v1` policy averages the latest attempt per `(lesson_id, question_id)` for each student/subject/concept. Bands are `needs_support` below 0.5, `developing` from 0.5 to below 0.8, and `secure` from 0.8. Retries replace earlier answers only in the projection; immutable attempts remain the source of truth. The record includes evidence/attempt/assistance counts and the latest unresolved error. Confidence and time-based evidence windows are explicitly deferred. ClassGroup aggregation remains deferred because no ClassGroup model exists yet.
 
 ---
 
@@ -178,13 +178,13 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 `docs/artifact.md` D6: *"Session close — summary card for the student, and handoff of session data to profile extraction (A3) and to D4."* Acceptance: *"a completed session measurably updates both the profile and the mastery record."*
 
-**Current state:** `state["complete"]` is set when the last question resolves, and a `complete` event is appended. Nothing else happens. No summary card, no A3 handoff, no D4 handoff.
+**Current state:** `state["complete"]` is set when the last question resolves, and a `complete` event is appended. D4 mastery is already current because every accepted assessed answer recalculates its concept. No summary card or A3 profile handoff happens yet.
 
 **Why it matters:** D6 is what closes the product loop (Study → Profile → Prep + Homework → Study). Without it the session is a terminal node — the student's work doesn't reach the teacher or the next lesson.
 
 **Question:** Does the mock need a student-facing summary card on completion (self-contained, no handoff), or is completion deliberately a dead end until D6? The client currently shows only a flat `t("complete")` string.
 
-> **Answer:** Completion remains the existing saved state and chat event. No summary redesign or production profile/mastery handoff was authorized in the catalog request.
+> **Answer:** D6 remains open. Completion keeps the existing saved state and chat event; it must next gain a student-facing summary. Mastery needs no duplicate completion write because it is transactionally recalculated after each answer. Profile handoff remains deferred.
 
 ---
 
@@ -210,7 +210,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 List the IDs and why. A closed question with a reason on record is more useful than a silently skipped one.
 
-> **Answer:** B5 is an intentional user-approved scope difference from the older Epic D plan, not a catalog bug. A4 is current-state synchronization on replay, now explicitly documented. Other deferred items remain tracked rather than declared resolved.
+> **Answer:** B5 is an intentional user-approved scope difference from the older Epic D plan, not a catalog bug. A4 is current-state synchronization on replay, now explicitly documented. B1–B3 are resolved for the seeded MVP; D6 and class aggregation remain tracked.
 
 ---
 
@@ -218,7 +218,7 @@ List the IDs and why. A closed question with a reason on record is more useful t
 
 Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a human before code starts.
 
-> **Answer:** Complete and verify the bilingual Subject → Chapter → Lesson catalog on top of the latest refactor. Future production D3/D4/D6 work needs the assessment, taxonomy and handoff decisions noted above.
+> **Answer:** D5 keeps the current bounded hint ladder and persisted assistance signal. After that, D6 adds the student-facing session summary and completion handoff. Profile and homework automation remain deferred.
 
 ---
 
@@ -230,9 +230,9 @@ Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a 
 | A2 | Missing translation handling | Bug | Seed validation + domain conflict |
 | A3 | `chat` without `question_id` | Bug — misleading error | Fixed: clear domain conflict for answer-classified chat |
 | A4 | Idempotent replay semantics | Contract | Documented current-state replay |
-| B1 | Throwaway vs foundation | **Gates B2–B5** | Open |
+| B1 | Throwaway vs foundation | **Gates B2–B5** | Seeded MVP foundation; no old-data migration |
 | B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Fixed for curated catalog: persistent attempts + subject taxonomy |
-| B3 | No `MasteryRecord` (D4) | Blocker — product decision | Open |
+| B3 | No `MasteryRecord` (D4) | Blocker — product decision | Fixed for MVP; class aggregation deferred |
 | B4 | No close / handoff (D6) | Blocker | Open |
 | B5 | One session per lesson (D1/D2) | Scope | Explicit user decision: permanent |
 | — | DB in controller | Architecture | Fixed in `6a07f09` |

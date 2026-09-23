@@ -22,6 +22,7 @@ All require an authenticated student. Read/create locale query is `en` or `ar` (
 | GET | /study-sessions/by-lesson/{lesson_id} | Student's permanent session (404 if not started). |
 | GET | /study-sessions/{id} | Conversation, safe questions and current learning state. |
 | GET | /study-sessions/{id}/attempts | Student-owned, concept-scoped assessment attempts. |
+| GET | /study-mastery | Authenticated student's current concept-level mastery records. |
 | POST | /study-sessions/{id}/messages | Apply chat/answer/help/hint/next action and return complete state. |
 
 Message fields: request_id, expected_version, action, optional question_id/text/option_id, locale. Question-scoped actions require the current question_id. Do not trust UI state: the service validates options, pending/resolved state, attempt limits, hint limits and completion. No bearer token should be passed into a frontend Client Component.
@@ -31,14 +32,14 @@ Message fields: request_id, expected_version, action, optional question_id/text/
 ## Mock behavior
 
 - Newton has a choice question followed by a written explanation. The other demo lessons each have a concept-specific choice question. No AI provider dependency.
-- Choice scoring uses a private answer key. Written scoring uses language-specific keyword groups, yielding 0, 0.5 or 1. This is **not** reliable educational assessment; scores remain demo feedback and are not written into production mastery/profile records.
+- Choice scoring uses a private answer key. Written scoring uses language-specific keyword groups, yielding 0, 0.5 or 1. This remains an MVP deterministic assessment, not a formal grade. Accepted scores update the D4 MVP mastery projection but never update the learner profile directly.
 - A correct answer or three attempts enables next. After the third unsuccessful attempt, include the explanation.
 - Explicit help, questions matching the small English/Arabic help detector, and free text while a choice question is active return a canned explanation without consuming attempts. Written declarative responses are treated as answers. This limited intent heuristic is a mock limitation; the future AI provider must preserve the distinction.
 - Hint requests reveal one of the question’s stored levels and persist the shown level. Each attempt records hint_level and whether help was supplied. Explanations/hints stay in the transcript.
 - Next after the final resolved question completes the session. Help remains available after completion.
 - Authored question/objective content follows the requested locale. Historical user messages and feedback retain their original language; changing locale does not rewrite history.
 
-Excluded: homework, teacher Q&A, timeline, self-check, notes, materials, live classes, production mastery and profile extraction. Do not merge the old D1 router alongside this router: they share URL names but have different contracts.
+Excluded: homework, teacher Q&A, timeline, self-check, notes, materials, live classes, class-level mastery aggregation and profile extraction. Do not merge the old D1 router alongside this router: they share URL names but have different contracts.
 
 ## Verification
 
@@ -87,7 +88,7 @@ The relational chain is `review_subjects.id ← review_chapters.subject_id`, the
 5. Start creates/resumes the same UUID; answers, help and hints save through the existing messages endpoint.
 6. Switch lessons and return: restore that lesson's separate saved state. Direct lesson URLs resolve their parent IDs.
 
-Mock AI, production mastery/profile handoff, repeat study runs and authoring APIs remain outside this catalog slice. One permanent session per school/student/lesson remains the explicit user decision.
+Mock AI, profile handoff, class-level mastery aggregation, repeat study runs and authoring APIs remain outside this catalog slice. One permanent session per school/student/lesson remains the explicit user decision.
 
 ## D3 attempt capture and error taxonomy (2026-09-23)
 
@@ -98,6 +99,21 @@ Incorrect answers use stable codes from a subject-owned taxonomy, never generate
 - Physics: unequal or missing action/reaction forces, incomplete or missing distinct-object reasoning, balanced-force-means-stopped, and kinetic-energy-requires-motion.
 - Mathematics: denominator-only equivalent-fraction scaling.
 
-Correct attempts have `error_type: null`. An answer is rejected before state mutation if its question lacks a `concept_ref`, its subject has no taxonomy, or an incorrect response has no approved mapping. This completes the D3 persistence and taxonomy contract for the curated catalog; it does not calculate mastery or perform the D4/D6 handoffs.
+Correct attempts have `error_type: null`. An answer is rejected before state mutation if its question lacks a `concept_ref`, its subject has no taxonomy, or an incorrect response has no approved mapping. This completes the D3 persistence and taxonomy contract for the curated catalog and supplies the evidence used by D4. D6 summary/profile handoff remains separate.
 
-Catalog validation: 65 tests passed with PostgreSQL enabled, including hierarchy filtering, bilingual IDs, concept capture, ownership/concurrency, seed reruns, and migration preservation through upgrade/downgrade/re-upgrade.
+## D4 MVP mastery records (2026-09-23)
+
+`mastery_records` is a recomputable per-school, per-student, per-subject, per-concept projection over immutable `review_attempts`. It is not a grade. After every accepted assessed answer, the service recalculates the affected concept inside the same transaction and upserts one record. The student can read only their own records through `GET /study-mastery`.
+
+The approved `mvp-v1` calculation is deliberately small:
+
+- Keep every attempt, but use only the latest attempt for each `(lesson_id, question_id)` as current evidence.
+- Average those latest correctness scores.
+- Map `< 0.5` to `needs_support`, `0.5..<0.8` to `developing`, and `>= 0.8` to `secure`.
+- Keep the latest still-unresolved error among current evidence as `dominant_error_type`; correcting that question removes its old error from the projection.
+- Record total attempts, current evidence count, assisted evidence count, calculation version and last-attempt time.
+- Use all evidence in the seeded MVP database. Confidence and time-based evidence windows are intentionally excluded.
+
+The attempt table remains the source of truth, so records can be rebuilt when the calculation changes. Class-group aggregation is deferred until a `ClassGroup` model exists. D6 student summary and profile handoff remain separate work.
+
+Validation: 76 tests passed with PostgreSQL enabled, including mastery thresholds, retry correction, multi-question averaging, role/tenant isolation, hierarchy filtering, ownership/concurrency, seed reruns, and migration upgrade/downgrade/re-upgrade.
