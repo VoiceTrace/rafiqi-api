@@ -122,6 +122,7 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - **Migrations**: Alembic — see `.claude/skills/db-migrations/SKILL.md`
 - **Testing**: pytest + pytest-asyncio + httpx.AsyncClient — see `.claude/skills/testing/SKILL.md`
 - **API conventions**: see `.claude/skills/fastapi-conventions/SKILL.md`
+- **Architecture enforcement**: see `.claude/skills/python-architecture/SKILL.md` — load this when reviewing agent-generated code; catches DB-in-controller, HTTPException-in-service, missing response_model, bare error strings
 - **Multi-tenancy**: row-level `school_id` FK on every student/teacher/school table — hard rule, not optional
 - **LLM**: Claude (Haiku-class for high-volume cheap tier: A2 chat, B2 draft, B5 prompts; stronger model for lower-volume synthesis: B6 misconception summary)
 - **Auth**: custom JWT — access token (30 min, python-jose + bcrypt) + rotating opaque refresh token (30 days, hashed at rest, revocable via `POST /auth/logout`), payload carries user_id + school_id + role. Two roles today: `teacher`, `student`, enforced via `require_teacher`/`require_student` deps in `app/api/deps.py`. Known open item: a still-valid access token isn't revoked immediately on user deactivation (bounded to the 30 min access-token lifetime, since refresh already re-checks `is_active`) — see `.claude/STATUS.md` Open Decisions if closing this fully becomes a priority.
@@ -133,4 +134,5 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - This file should be updated as decisions get made — treat it as living project memory, not a one-time brief.
 - When ticket-plan details and earlier prose descriptions conflict anywhere in this file, the ticket-plan wording wins.
 - Always read `.claude/STATUS.md` at the start of a session before doing anything else — it records exactly where work stopped.
-- Apply the relevant skill(s) from `.claude/skills/` for every ticket: `fastapi-conventions` when adding routes/schemas/services, `db-migrations` when touching models/tables, `testing` before marking any ticket done.
+- Apply the relevant skill(s) from `.claude/skills/` for every ticket: `fastapi-conventions` when adding routes/schemas/services, `db-migrations` when touching models/tables, `testing` before marking any ticket done, `python-architecture` when reviewing any agent-generated code.
+- **Agent code (Codex)**: `AGENTS.md` at the repo root is the authoritative instruction file for Codex. If Codex-generated code shows DB queries in route files, `HTTPException` in service files, or missing `response_model`, run the `python-architecture` skill and flag it before merging.
