@@ -21,6 +21,7 @@ from app.models.review import ReviewLesson, ReviewSession
 from app.schemas.review import ReviewMessage
 from app.services.review import ReviewError, apply_message, initial_state, session_public
 from app.services.review_seed import LESSON
+from app.services.review_catalog import seed_catalog
 
 
 def command(action, version=0, question="force-pairs", **kwargs):
@@ -76,7 +77,8 @@ def test_invalid_and_stale_actions_do_not_mutate():
 @pytest.mark.asyncio
 async def test_role_gate_without_dependency_override():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        assert (await client.get("/study-lessons")).status_code in (401, 403)
+        for path in ("/study-lessons", "/study-subjects", "/study-subjects/physics/chapters"):
+            assert (await client.get(path)).status_code in (401, 403)
         token = create_access_token(uuid.uuid4(), uuid.uuid4(), "teacher")
         assert (await client.get("/study-lessons", headers={"Authorization": f"Bearer {token}"})).status_code == 403
 
@@ -97,7 +99,7 @@ async def api():
         await db.flush()
         for uid in (student_id, other_id):
             db.add(User(id=uid, school_id=school_id, email=f"{uid}@example.test", full_name="Student", role="student", hashed_password="test"))
-        db.add(ReviewLesson(id="newton-third-law", content=LESSON))
+        await seed_catalog(db)
         await db.commit()
     identity = {"user": CurrentUser(student_id, school_id, "student")}
     async def user(): return identity["user"]
@@ -157,3 +159,62 @@ async def test_concurrent_create_and_send(api):
     async with factory() as db:
         row = (await db.execute(select(ReviewSession))).scalar_one()
         assert row.version == 1 and row.state["hint_level"] == 1
+
+
+@pytest.mark.asyncio
+async def test_catalog_hierarchy_locales_and_independent_sessions(api):
+    client, _, _, factory = api
+    subjects = (await client.get("/study-subjects")).json()
+    arabic = (await client.get("/study-subjects?locale=ar")).json()
+    assert {s["id"] for s in subjects} == {"physics", "mathematics"}
+    assert [s["id"] for s in subjects] == [s["id"] for s in arabic]
+    assert subjects[0]["title"] != arabic[0]["title"]
+    found = []
+    for subject in subjects:
+        chapters = (await client.get(f"/study-subjects/{subject['id']}/chapters")).json()
+        assert chapters
+        for chapter in chapters:
+            assert chapter["subject_id"] == subject["id"]
+            en = (await client.get("/study-lessons", params={"chapter_id": chapter["id"]})).json()
+            ar = (await client.get("/study-lessons", params={"chapter_id": chapter["id"], "locale": "ar"})).json()
+            assert en and [x["id"] for x in en] == [x["id"] for x in ar]
+            for lesson, translated in zip(en, ar):
+                assert lesson["chapter_id"] == chapter["id"] and lesson["subject_id"] == subject["id"]
+                assert lesson["objective"] != translated["objective"]
+                assert lesson["concept_refs"][0]["id"] == translated["concept_refs"][0]["id"]
+                assert "questions" not in lesson and "answer" not in json.dumps(lesson)
+                found.append(lesson["id"])
+    assert len(found) == 4 and len(set(found)) == 4
+    for path in ("/study-subjects/missing/chapters", "/study-lessons?chapter_id=missing"):
+        response = await client.get(path)
+        assert response.status_code == 404
+        assert response.json()["detail"]["error"]["code"] == "not_found"
+    assert (await client.get("/study-subjects?locale=xx")).status_code == 422
+    first = (await client.post("/study-sessions", json={"lesson_id": "balanced-forces"})).json()
+    second = (await client.post("/study-sessions", json={"lesson_id": "kinetic-energy"})).json()
+    assert first["id"] != second["id"]
+    result = await client.post(f"/study-sessions/{first['id']}/messages", json=command("answer", question="balanced-forces-check", option_id="correct"))
+    assert result.status_code == 200, result.text
+    assert result.json()["messages"][-1]["concept_ref"] == "net-force"
+    assert (await client.get("/study-sessions/by-lesson/kinetic-energy")).json()["attempts"] == 0
+    resumed = (await client.get("/study-sessions/by-lesson/balanced-forces")).json()
+    assert resumed["id"] == first["id"] and resumed["attempts"] == 1
+    async with factory() as db:
+        await seed_catalog(db)
+        await seed_catalog(db)
+    assert len((await client.get("/study-lessons")).json()) == 4
+    assert (await client.get("/study-sessions/by-lesson/balanced-forces")).json()["attempts"] == 1
+
+
+def test_content_driven_hints_and_missing_translation():
+    from copy import deepcopy
+    from app.services.review import ReviewError
+    content = deepcopy(LESSON)
+    content["en"]["questions"][0]["hints"] = ["Only one hint"]
+    state = apply_message(content, initial_state(), ReviewMessage(**command("hint")))
+    session = SimpleNamespace(id=uuid.uuid4(), lesson_id="newton-third-law", version=1, content=content, state=state)
+    assert session_public(session, "en")["can_hint"] is False
+    del content["ar"]
+    with pytest.raises(ReviewError) as error:
+        session_public(session, "ar")
+    assert error.value.code == "lesson_translation_unavailable"
