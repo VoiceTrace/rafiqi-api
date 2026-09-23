@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -20,7 +19,7 @@ from app.main import app
 from app.models import School, User
 from app.models.review import ReviewLesson, ReviewSession
 from app.schemas.review import ReviewMessage
-from app.services.review import apply_message, initial_state, session_public
+from app.services.review import ReviewError, apply_message, initial_state, session_public
 from app.services.review_seed import LESSON
 
 
@@ -63,14 +62,14 @@ def test_complete_written_flow_and_no_key_leak(locale):
 def test_invalid_and_stale_actions_do_not_mutate():
     state = initial_state()
     for args in [command("next"), command("answer", option_id="bad"), command("hint", question="wrong")]:
-        with pytest.raises(HTTPException):
+        with pytest.raises(ReviewError):
             apply_message(LESSON, state, ReviewMessage(**args))
     assert state == initial_state()
     for _ in range(3):
         state = apply_message(LESSON, state, ReviewMessage(**command("answer", option_id="none")))
     assert state["resolved"]
     assert LESSON["en"]["questions"][0]["explanation"] in state["events"][-1]["text"]
-    with pytest.raises(HTTPException):
+    with pytest.raises(ReviewError):
         apply_message(LESSON, state, ReviewMessage(**command("answer", option_id="equal")))
 
 

@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
@@ -27,4 +27,45 @@ class ReviewMessage(BaseModel):
         if self.action in ("answer", "hint", "next") and not self.question_id:
             raise ValueError("question_id is required")
         return self
+
+
+class LessonOut(BaseModel):
+    id: str
+    title: str
+    subject: str
+    chapter: str
+    objective: str
+    key_points: list[str]
+
+
+class QuestionOption(BaseModel):
+    id: str
+    text: str
+
+
+class QuestionOut(BaseModel):
+    """Safe projection of a question — answer keys, keywords and hints are excluded."""
+    id: str
+    kind: Literal["choice", "written"]
+    text: str
+    options: list[QuestionOption]
+
+
+class SessionOut(BaseModel):
+    id: str
+    lesson_id: str
+    version: int
+    lesson: LessonOut
+    mock: bool
+    complete: bool
+    current_question_id: str
+    attempts: int
+    hint_level: int
+    resolved: bool
+    can_hint: bool
+    total_questions: int
+    questions: list[QuestionOut]
+    # Transcript entries vary by `kind` (text/question/answer/feedback/hint/action/complete),
+    # so they pass through untyped to keep the wire format byte-identical for existing clients.
+    messages: list[dict[str, Any]]
 

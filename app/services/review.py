@@ -1,8 +1,18 @@
 """Deterministic mock chat. No production AI or mastery claims."""
 from copy import deepcopy
 import re
-from fastapi import HTTPException
-from app.schemas.review import ReviewMessage
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.review import ReviewLesson, ReviewSession
+from app.schemas.review import LessonOut, Locale, ReviewMessage, SessionOut
+
+# Idempotency keys only need to cover client retries, so the list is trimmed rather
+# than grown forever — the events list has its own separate 1000-entry cap.
+REQUEST_HISTORY_LIMIT = 200
 
 COPY = {
     "welcome": {"en": "Let’s review this lesson. Answer the question or ask me for help.", "ar": "لنراجع هذا الدرس. أجب عن السؤال أو اطلب مني المساعدة."},
@@ -20,8 +30,18 @@ def initial_state():
             "requests": []}
 
 
+class ReviewError(Exception):
+    """Domain error. The route maps `status` to the HTTP code and reports `message`."""
+
+    def __init__(self, code, status=409):
+        super().__init__(code)
+        self.code = code
+        self.status = status
+        self.message = code.replace("_", " ").capitalize()
+
+
 def fail(detail, status=409):
-    raise HTTPException(status_code=status, detail=detail)
+    raise ReviewError(detail, status)
 
 
 def is_help(text):
@@ -92,7 +112,7 @@ def apply_message(content, original, message: ReviewMessage):
             feedback += " " + question["explanation"]
         events.append({"role": "assistant", "kind": "feedback", "question_id": question["id"],
                        "locale": locale, "text": feedback, "score": score, "attempt": state["attempts"]})
-    state["requests"].append(str(message.request_id))
+    state["requests"] = [*state["requests"], str(message.request_id)][-REQUEST_HISTORY_LIMIT:]
     return state
 
 
@@ -122,3 +142,100 @@ def session_public(session, locale):
             "attempts": state["attempts"], "hint_level": state["hint_level"], "resolved": state["resolved"],
             "can_hint": not state["complete"] and not state["resolved"] and state["hint_level"] < 3,
             "total_questions": len(questions), "questions": visible, "messages": events}
+
+
+# ── Persistence ───────────────────────────────────────────────────────────────
+
+async def _owned_session(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    session_id: uuid.UUID | None = None,
+    lesson_id: str | None = None,
+    lock: bool = False,
+) -> ReviewSession | None:
+    """Look a session up by id or lesson, always scoped to the bearer-token student."""
+    stmt = select(ReviewSession).where(
+        ReviewSession.school_id == school_id,
+        ReviewSession.student_id == student_id,
+    )
+    stmt = stmt.where(ReviewSession.id == session_id) if session_id else stmt.where(ReviewSession.lesson_id == lesson_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def list_lessons(db: AsyncSession, locale: Locale) -> list[LessonOut]:
+    rows = (await db.execute(select(ReviewLesson).order_by(ReviewLesson.id))).scalars().all()
+    return [LessonOut(**lesson_public(row.id, row.content, locale)) for row in rows]
+
+
+async def get_lesson(db: AsyncSession, lesson_id: str, locale: Locale) -> LessonOut:
+    row = await db.get(ReviewLesson, lesson_id)
+    if row is None:
+        raise ReviewError("lesson_not_found", 404)
+    return LessonOut(**lesson_public(row.id, row.content, locale))
+
+
+async def create_or_resume_session(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, lesson_id: str, locale: Locale,
+) -> tuple[SessionOut, bool]:
+    """Return the student's session for this lesson plus whether this call created it."""
+    existing = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
+    if existing:
+        return SessionOut(**session_public(existing, locale)), False
+
+    lesson = await db.get(ReviewLesson, lesson_id)
+    if lesson is None:
+        raise ReviewError("lesson_not_found", 404)
+
+    session = ReviewSession(school_id=school_id, student_id=student_id, lesson_id=lesson.id,
+                            content=lesson.content, state=initial_state(), version=0)
+    db.add(session)
+    try:
+        await db.commit()
+        await db.refresh(session)
+    except IntegrityError:
+        # A concurrent create won the unique constraint — resume the row it wrote.
+        await db.rollback()
+        session = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
+        if session is None:
+            raise
+        return SessionOut(**session_public(session, locale)), False
+    return SessionOut(**session_public(session, locale)), True
+
+
+async def get_session_by_lesson(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, lesson_id: str, locale: Locale,
+) -> SessionOut:
+    session = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
+    if session is None:
+        raise ReviewError("session_not_found", 404)
+    return SessionOut(**session_public(session, locale))
+
+
+async def get_session(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, session_id: uuid.UUID, locale: Locale,
+) -> SessionOut:
+    session = await _owned_session(db, student_id, school_id, session_id=session_id)
+    if session is None:
+        raise ReviewError("session_not_found", 404)
+    return SessionOut(**session_public(session, locale))
+
+
+async def process_message(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, session_id: uuid.UUID, message: ReviewMessage,
+) -> SessionOut:
+    session = await _owned_session(db, student_id, school_id, session_id=session_id, lock=True)
+    if session is None:
+        raise ReviewError("session_not_found", 404)
+    if str(message.request_id) in session.state["requests"]:
+        return SessionOut(**session_public(session, message.locale))
+    if session.version != message.expected_version:
+        raise ReviewError("stale_session", 409)
+
+    session.state = apply_message(session.content, session.state, message)
+    session.version += 1
+    await db.commit()
+    await db.refresh(session)
+    return SessionOut(**session_public(session, message.locale))
