@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db_session, require_student
 from app.core.errors import ErrorCode
-from app.schemas.review import AttemptOut, ChapterOut, SubjectOut, CreateReview, LessonOut, Locale, ReviewMessage, SessionOut
+from app.schemas.review import AttemptOut, ChapterOut, SubjectOut, CreateReview, LessonOut, Locale, MasteryOut, ReviewMessage, SessionOut
 from app.services import review as svc
 from app.services import review_catalog as catalog
 
@@ -89,6 +89,11 @@ async def attempts(session_id: uuid.UUID, user: Student, db: Database) -> list[A
         return await svc.list_attempts(db, user.id, user.school_id, session_id)
     except svc.ReviewError as error:
         raise _http(error)
+
+
+@router.get("/study-mastery", response_model=list[MasteryOut])
+async def mastery(user: Student, db: Database) -> list[MasteryOut]:
+    return await svc.list_mastery(db, user.id, user.school_id)
 
 
 @router.post("/study-sessions/{session_id}/messages", response_model=SessionOut)

@@ -1,19 +1,21 @@
-"""Deterministic mock chat. No production AI or mastery claims."""
+"""Deterministic review chat with persistent attempt and MVP mastery evidence."""
 from copy import deepcopy
 import re
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.review import ReviewAttempt, ReviewChapter, ReviewLesson, ReviewSession
-from app.schemas.review import AttemptOut, LessonOut, Locale, ReviewMessage, SessionOut
+from app.models.review import MasteryRecord, ReviewAttempt, ReviewChapter, ReviewLesson, ReviewSession
+from app.schemas.review import AttemptOut, LessonOut, Locale, MasteryOut, ReviewMessage, SessionOut
 from app.services.review_assessment import AssessmentMetadataError, classify_error
 
 # Idempotency keys only need to cover client retries, so the list is trimmed rather
 # than grown forever — the events list has its own separate 1000-entry cap.
 REQUEST_HISTORY_LIMIT = 200
+MASTERY_CALCULATION_VERSION = "mvp-v1"
 
 COPY = {
     "welcome": {"en": "Let’s review this lesson. Answer the question or ask me for help.", "ar": "لنراجع هذا الدرس. أجب عن السؤال أو اطلب مني المساعدة."},
@@ -255,6 +257,83 @@ async def list_attempts(
     return [AttemptOut.model_validate(row) for row in rows]
 
 
+async def list_mastery(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID,
+) -> list[MasteryOut]:
+    rows = (await db.execute(
+        select(MasteryRecord).where(
+            MasteryRecord.student_id == student_id,
+            MasteryRecord.school_id == school_id,
+        ).order_by(MasteryRecord.subject_id, MasteryRecord.concept_ref)
+    )).scalars().all()
+    return [MasteryOut.model_validate(row) for row in rows]
+
+
+def mastery_band(score: float) -> str:
+    """Map the approved MVP score to its student-safe categorical band."""
+    if score < 0.5:
+        return "needs_support"
+    if score < 0.8:
+        return "developing"
+    return "secure"
+
+
+async def _recalculate_mastery(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    subject_id: str,
+    concept_ref: str,
+) -> None:
+    """Rebuild one concept record from immutable attempts in the current transaction."""
+    attempts = (await db.execute(
+        select(ReviewAttempt)
+        .join(ReviewLesson, ReviewLesson.id == ReviewAttempt.lesson_id)
+        .join(ReviewChapter, ReviewChapter.id == ReviewLesson.chapter_id)
+        .where(
+            ReviewAttempt.student_id == student_id,
+            ReviewAttempt.school_id == school_id,
+            ReviewAttempt.concept_ref == concept_ref,
+            ReviewChapter.subject_id == subject_id,
+        )
+        .order_by(ReviewAttempt.created_at, ReviewAttempt.id)
+    )).scalars().all()
+    if not attempts:
+        return
+
+    latest_by_question: dict[tuple[str, str], ReviewAttempt] = {}
+    for attempt in attempts:
+        latest_by_question[(attempt.lesson_id, attempt.question_id)] = attempt
+    evidence = sorted(latest_by_question.values(), key=lambda row: (row.created_at, str(row.id)))
+    score = sum(row.correctness_score for row in evidence) / len(evidence)
+    unresolved_errors = [row for row in evidence if row.error_type is not None]
+    dominant_error = unresolved_errors[-1].error_type if unresolved_errors else None
+
+    values = {
+        "id": uuid.uuid4(),
+        "school_id": school_id,
+        "student_id": student_id,
+        "subject_id": subject_id,
+        "concept_ref": concept_ref,
+        "mastery_score": score,
+        "mastery_band": mastery_band(score),
+        "evidence_count": len(evidence),
+        "attempt_count": len(attempts),
+        "assisted_evidence_count": sum(row.assisted for row in evidence),
+        "dominant_error_type": dominant_error,
+        "calculation_version": MASTERY_CALCULATION_VERSION,
+        "last_attempt_at": attempts[-1].created_at,
+    }
+    immutable_keys = {"id", "school_id", "student_id", "subject_id", "concept_ref"}
+    update_values = {key: value for key, value in values.items() if key not in immutable_keys}
+    update_values["updated_at"] = func.now()
+    await db.execute(
+        pg_insert(MasteryRecord)
+        .values(**values)
+        .on_conflict_do_update(constraint="uq_mastery_student_concept", set_=update_values)
+    )
+
+
 def _attempt_from_events(
     session: ReviewSession,
     message: ReviewMessage,
@@ -316,6 +395,14 @@ async def process_message(
     session.version += 1
     if attempt is not None:
         db.add(attempt)
+        await db.flush()
+        await _recalculate_mastery(
+            db=db,
+            student_id=student_id,
+            school_id=school_id,
+            subject_id=session.content["subject_id"],
+            concept_ref=attempt.concept_ref,
+        )
     await db.commit()
     await db.refresh(session)
     return SessionOut(**session_public(session, message.locale))
