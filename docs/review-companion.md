@@ -21,6 +21,7 @@ All require an authenticated student. Read/create locale query is `en` or `ar` (
 | POST | /study-sessions | `{lesson_id}` creates or resumes. |
 | GET | /study-sessions/by-lesson/{lesson_id} | Student's permanent session (404 if not started). |
 | GET | /study-sessions/{id} | Conversation, safe questions and current learning state. |
+| GET | /study-sessions/{id}/attempts | Student-owned, concept-scoped assessment attempts. |
 | POST | /study-sessions/{id}/messages | Apply chat/answer/help/hint/next action and return complete state. |
 
 Message fields: request_id, expected_version, action, optional question_id/text/option_id, locale. Question-scoped actions require the current question_id. Do not trust UI state: the service validates options, pending/resolved state, attempt limits, hint limits and completion. No bearer token should be passed into a frontend Client Component.
@@ -86,6 +87,17 @@ The relational chain is `review_subjects.id ← review_chapters.subject_id`, the
 5. Start creates/resumes the same UUID; answers, help and hints save through the existing messages endpoint.
 6. Switch lessons and return: restore that lesson's separate saved state. Direct lesson URLs resolve their parent IDs.
 
-Mock AI, production mastery/profile handoff, error taxonomy, repeat study runs and authoring APIs remain outside this catalog slice. One permanent session per school/student/lesson remains the explicit user decision.
+Mock AI, production mastery/profile handoff, repeat study runs and authoring APIs remain outside this catalog slice. One permanent session per school/student/lesson remains the explicit user decision.
+
+## D3 attempt capture and error taxonomy (2026-09-23)
+
+Every accepted answer now creates one immutable `review_attempts` row in the same transaction as the session-state update. The row records school, student, session, lesson, request, question, concept, response, score, hint/assistance signals, attempt number, locale, and timestamp. `(session_id, request_id)` is unique, so retrying an accepted message cannot duplicate an attempt. Attempt reads are scoped by both `school_id` and `student_id`.
+
+Incorrect answers use stable codes from a subject-owned taxonomy, never generated free text:
+
+- Physics: unequal or missing action/reaction forces, incomplete or missing distinct-object reasoning, balanced-force-means-stopped, and kinetic-energy-requires-motion.
+- Mathematics: denominator-only equivalent-fraction scaling.
+
+Correct attempts have `error_type: null`. An answer is rejected before state mutation if its question lacks a `concept_ref`, its subject has no taxonomy, or an incorrect response has no approved mapping. This completes the D3 persistence and taxonomy contract for the curated catalog; it does not calculate mastery or perform the D4/D6 handoffs.
 
 Catalog validation: 65 tests passed with PostgreSQL enabled, including hierarchy filtering, bilingual IDs, concept capture, ownership/concurrency, seed reruns, and migration preservation through upgrade/downgrade/re-upgrade.

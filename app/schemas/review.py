@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Locale = Literal["en", "ar"]
 
@@ -85,4 +86,23 @@ class SessionOut(BaseModel):
     # Transcript entries vary by `kind` (text/question/answer/feedback/hint/action/complete),
     # so they pass through untyped to keep the wire format byte-identical for existing clients.
     messages: list[dict[str, Any]]
+
+
+class AttemptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    session_id: UUID
+    lesson_id: str
+    question_id: str
+    concept_ref: str
+    response_text: str
+    option_id: str | None
+    correctness_score: float
+    error_type: str | None
+    hint_level: int
+    assisted: bool
+    attempt_number: int
+    locale: Locale
+    created_at: datetime
 

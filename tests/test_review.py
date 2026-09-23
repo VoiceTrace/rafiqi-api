@@ -17,11 +17,12 @@ from app.core.database import Base
 from app.core.security import create_access_token
 from app.main import app
 from app.models import School, User
-from app.models.review import ReviewLesson, ReviewSession
+from app.models.review import ReviewAttempt, ReviewLesson, ReviewSession
 from app.schemas.review import ReviewMessage
 from app.services.review import ReviewError, apply_message, initial_state, session_public
 from app.services.review_seed import LESSON
 from app.services.review_catalog import seed_catalog
+from app.services.review_assessment import AssessmentMetadataError, classify_error
 
 
 def command(action, version=0, question="force-pairs", **kwargs):
@@ -82,6 +83,15 @@ def test_questionless_chat_that_becomes_an_answer_has_a_clear_error():
         apply_message(LESSON, state, ReviewMessage(**payload))
     assert error.value.code == "chat_question_id_required"
     assert state["attempts"] == 0 and state["resolved"] is False
+
+
+def test_subject_error_taxonomy_is_stable_and_requires_concepts():
+    question = LESSON["en"]["questions"][0]
+    assert classify_error(subject_id="physics", question=question, option_id="smaller", score=0) == "force_pair_unequal_magnitude"
+    assert classify_error(subject_id="physics", question=question, option_id="equal", score=1) is None
+    without_concept = {**question, "concept_ref": None}
+    with pytest.raises(AssessmentMetadataError, match="assessment_concept_required"):
+        classify_error(subject_id="physics", question=without_concept, option_id="equal", score=1)
 
 
 @pytest.mark.asyncio
@@ -169,6 +179,28 @@ async def test_concurrent_create_and_send(api):
     async with factory() as db:
         row = (await db.execute(select(ReviewSession))).scalar_one()
         assert row.version == 1 and row.state["hint_level"] == 1
+
+
+@pytest.mark.asyncio
+async def test_attempt_capture_is_idempotent_scoped_and_taxonomy_backed(api):
+    client, identity, other_id, factory = api
+    session = (await client.post("/study-sessions", json={"lesson_id": "balanced-forces"})).json()
+    payload = command("answer", question="balanced-forces-check", option_id="other")
+    response = await client.post(f"/study-sessions/{session['id']}/messages", json=payload)
+    assert response.status_code == 200
+    assert (await client.post(f"/study-sessions/{session['id']}/messages", json=payload)).status_code == 200
+
+    attempts = (await client.get(f"/study-sessions/{session['id']}/attempts")).json()
+    assert len(attempts) == 1
+    assert attempts[0]["concept_ref"] == "net-force"
+    assert attempts[0]["correctness_score"] == 0
+    assert attempts[0]["error_type"] == "balanced_force_means_stopped"
+    assert attempts[0]["attempt_number"] == 1
+    async with factory() as db:
+        assert len((await db.execute(select(ReviewAttempt))).scalars().all()) == 1
+
+    identity["user"] = CurrentUser(other_id, identity["user"].school_id, "student")
+    assert (await client.get(f"/study-sessions/{session['id']}/attempts")).status_code == 404
 
 
 @pytest.mark.asyncio

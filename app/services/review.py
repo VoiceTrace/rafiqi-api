@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.review import ReviewChapter, ReviewLesson, ReviewSession
-from app.schemas.review import LessonOut, Locale, ReviewMessage, SessionOut
+from app.models.review import ReviewAttempt, ReviewChapter, ReviewLesson, ReviewSession
+from app.schemas.review import AttemptOut, LessonOut, Locale, ReviewMessage, SessionOut
+from app.services.review_assessment import AssessmentMetadataError, classify_error
 
 # Idempotency keys only need to cover client retries, so the list is trimmed rather
 # than grown forever — the events list has its own separate 1000-entry cap.
@@ -239,6 +240,64 @@ async def get_session(
     return SessionOut(**session_public(session, locale))
 
 
+async def list_attempts(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, session_id: uuid.UUID,
+) -> list[AttemptOut]:
+    if await _owned_session(db, student_id, school_id, session_id=session_id) is None:
+        raise ReviewError("session_not_found", 404)
+    rows = (await db.execute(
+        select(ReviewAttempt).where(
+            ReviewAttempt.session_id == session_id,
+            ReviewAttempt.student_id == student_id,
+            ReviewAttempt.school_id == school_id,
+        ).order_by(ReviewAttempt.created_at, ReviewAttempt.id)
+    )).scalars().all()
+    return [AttemptOut.model_validate(row) for row in rows]
+
+
+def _attempt_from_events(
+    session: ReviewSession,
+    message: ReviewMessage,
+    new_state: dict,
+    previous_event_count: int,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+) -> ReviewAttempt | None:
+    added = new_state["events"][previous_event_count:]
+    answer = next((event for event in added if event["kind"] == "answer"), None)
+    if answer is None:
+        return None
+    feedback = next(event for event in added if event["kind"] == "feedback")
+    questions = localized_content(session.content, message.locale)["questions"]
+    question = next(item for item in questions if item["id"] == answer["question_id"])
+    try:
+        error_type = classify_error(
+            subject_id=session.content.get("subject_id"),
+            question=question,
+            option_id=answer.get("option_id"),
+            score=float(feedback["score"]),
+        )
+    except AssessmentMetadataError as error:
+        raise ReviewError(str(error), 409) from error
+    return ReviewAttempt(
+        school_id=school_id,
+        student_id=student_id,
+        session_id=session.id,
+        lesson_id=session.lesson_id,
+        request_id=message.request_id,
+        question_id=question["id"],
+        concept_ref=question["concept_ref"],
+        response_text=answer["text"],
+        option_id=answer.get("option_id"),
+        correctness_score=float(feedback["score"]),
+        error_type=error_type,
+        hint_level=answer["hint_level"],
+        assisted=answer["assisted"],
+        attempt_number=answer["attempt"],
+        locale=answer["locale"],
+    )
+
+
 async def process_message(
     db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, session_id: uuid.UUID, message: ReviewMessage,
 ) -> SessionOut:
@@ -250,8 +309,13 @@ async def process_message(
     if session.version != message.expected_version:
         raise ReviewError("stale_session", 409)
 
-    session.state = apply_message(session.content, session.state, message)
+    previous_event_count = len(session.state["events"])
+    new_state = apply_message(session.content, session.state, message)
+    attempt = _attempt_from_events(session, message, new_state, previous_event_count, student_id, school_id)
+    session.state = new_state
     session.version += 1
+    if attempt is not None:
+        db.add(attempt)
     await db.commit()
     await db.refresh(session)
     return SessionOut(**session_public(session, message.locale))

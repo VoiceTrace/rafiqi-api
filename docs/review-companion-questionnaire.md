@@ -158,7 +158,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** If B1 is (b), should `concept_ref` be added to the question schema now as a forward-compatibility measure, even though nothing consumes it yet? If B1 is (a), confirm this is intentionally deferred.
 
-> **Answer:** Added stable concept_ref to seeded questions, public questions, and saved answer/feedback events. The migration enriches existing known Newton snapshots/events without altering scores or progress. Unknown custom mappings remain absent. D3 is not complete: a subject error taxonomy and production assessment are not part of the catalog request.
+> **Answer:** Completed for the curated review catalog. Every accepted answer now writes an immutable, concept-scoped `review_attempts` row in the same transaction as session state. Incorrect responses use predefined physics or mathematics taxonomy codes; correct responses store no error type. Missing concepts, missing subject taxonomies, and unmapped incorrect responses fail before state mutation. Idempotency is enforced by a unique `(session_id, request_id)` constraint. This supplies D3 assessment data but does not calculate D4 mastery.
 
 ---
 
@@ -231,7 +231,7 @@ Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a 
 | A3 | `chat` without `question_id` | Bug — misleading error | Fixed: clear domain conflict for answer-classified chat |
 | A4 | Idempotent replay semantics | Contract | Documented current-state replay |
 | B1 | Throwaway vs foundation | **Gates B2–B5** | Open |
-| B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Open |
+| B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Fixed for curated catalog: persistent attempts + subject taxonomy |
 | B3 | No `MasteryRecord` (D4) | Blocker — product decision | Open |
 | B4 | No close / handoff (D6) | Blocker | Open |
 | B5 | One session per lesson (D1/D2) | Scope | Explicit user decision: permanent |

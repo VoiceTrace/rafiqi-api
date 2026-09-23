@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.review import ReviewSubject, ReviewChapter, ReviewLesson
 from app.schemas.review import SubjectOut, ChapterOut, Locale
 from app.services.review import ReviewError
+from app.services.review_assessment import validate_question_assessment
 
 
 def catalog_seed():
@@ -34,6 +35,8 @@ def catalog_seed():
                 raise ValueError("Invalid bilingual catalog seed")
             if not (all(q["concept_ref"] in refs for q in localized["questions"])):
                 raise ValueError("Invalid bilingual catalog seed")
+            for question in localized["questions"]:
+                validate_question_assessment(content["subject_id"], question)
         if not ([q["id"] for q in content["en"]["questions"]] == [q["id"] for q in content["ar"]["questions"]]):
             raise ValueError("Invalid bilingual catalog seed")
         if not ([r["id"] for r in content["en"]["concept_refs"]] == [r["id"] for r in content["ar"]["concept_refs"]]):
