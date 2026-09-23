@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db_session, require_student
 from app.core.errors import ErrorCode
-from app.schemas.review import CreateReview, LessonOut, Locale, ReviewMessage, SessionOut
+from app.schemas.review import ChapterOut, SubjectOut, CreateReview, LessonOut, Locale, ReviewMessage, SessionOut
 from app.services import review as svc
+from app.services import review_catalog as catalog
 
 router = APIRouter(tags=["study-review"])
 Student = Annotated[CurrentUser, Depends(require_student)]
@@ -21,9 +22,28 @@ def _http(error: svc.ReviewError) -> HTTPException:
     return HTTPException(status_code=error.status, detail={"error": {"code": code, "message": error.message}})
 
 
+@router.get("/study-subjects", response_model=list[SubjectOut])
+async def subjects(user: Student, db: Database, locale: Locale = "en") -> list[SubjectOut]:
+    try:
+        return await catalog.list_subjects(db, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
+
+
+@router.get("/study-subjects/{subject_id}/chapters", response_model=list[ChapterOut])
+async def chapters(subject_id: str, user: Student, db: Database, locale: Locale = "en") -> list[ChapterOut]:
+    try:
+        return await catalog.list_chapters(db, subject_id, locale)
+    except svc.ReviewError as error:
+        raise _http(error)
+
+
 @router.get("/study-lessons", response_model=list[LessonOut])
-async def lessons(user: Student, db: Database, locale: Locale = "en") -> list[LessonOut]:
-    return await svc.list_lessons(db, locale)
+async def lessons(user: Student, db: Database, locale: Locale = "en", chapter_id: str | None = None) -> list[LessonOut]:
+    try:
+        return await svc.list_lessons(db, locale, chapter_id)
+    except svc.ReviewError as error:
+        raise _http(error)
 
 
 @router.get("/study-lessons/{lesson_id}", response_model=LessonOut)

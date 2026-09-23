@@ -29,6 +29,19 @@ class ReviewMessage(BaseModel):
         return self
 
 
+class SubjectOut(BaseModel):
+    id: str
+    title: str
+
+
+class ChapterOut(SubjectOut):
+    subject_id: str
+
+
+class ConceptOut(SubjectOut):
+    description: str
+
+
 class LessonOut(BaseModel):
     id: str
     title: str
@@ -36,6 +49,9 @@ class LessonOut(BaseModel):
     chapter: str
     objective: str
     key_points: list[str]
+    subject_id: str
+    chapter_id: str
+    concept_refs: list[ConceptOut]
 
 
 class QuestionOption(BaseModel):
@@ -49,6 +65,7 @@ class QuestionOut(BaseModel):
     kind: Literal["choice", "written"]
     text: str
     options: list[QuestionOption]
+    concept_ref: str | None = None
 
 
 class SessionOut(BaseModel):

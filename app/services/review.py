@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.review import ReviewLesson, ReviewSession
+from app.models.review import ReviewChapter, ReviewLesson, ReviewSession
 from app.schemas.review import LessonOut, Locale, ReviewMessage, SessionOut
 
 # Idempotency keys only need to cover client retries, so the list is trimmed rather
@@ -48,10 +48,16 @@ def is_help(text):
     return bool(re.search(r"\?|؟|\b(help|explain|hint|example|why|how|what|confused)\b|ساعد|اشرح|شرح|تلميح|مثال|لماذا|كيف|ما معنى|لا أفهم", text, re.I))
 
 
+def localized_content(content, locale):
+    if locale not in content:
+        raise ReviewError("lesson_translation_unavailable", 409)
+    return content[locale]
+
+
 def apply_message(content, original, message: ReviewMessage):
     state = deepcopy(original)
     locale = message.locale
-    question = content[locale]["questions"][state["index"]]
+    question = localized_content(content, locale)["questions"][state["index"]]
     if message.question_id and message.question_id != question["id"]:
         fail("stale_question")
     action = message.action
@@ -106,26 +112,28 @@ def apply_message(content, original, message: ReviewMessage):
         state["resolved"] = score == 1 or state["attempts"] == 3
         events.append({"role": "student", "kind": "answer", "question_id": question["id"], "locale": locale,
                        "text": text, "option_id": message.option_id, "attempt": state["attempts"],
-                       "hint_level": state["hint_level"], "assisted": state["assistance"]})
+                       "hint_level": state["hint_level"], "assisted": state["assistance"], "concept_ref": question.get("concept_ref")})
         feedback = COPY["correct" if score == 1 else "partial" if score else "retry"][locale]
         if state["resolved"]:
             feedback += " " + question["explanation"]
         events.append({"role": "assistant", "kind": "feedback", "question_id": question["id"],
-                       "locale": locale, "text": feedback, "score": score, "attempt": state["attempts"]})
+                       "locale": locale, "text": feedback, "score": score, "attempt": state["attempts"], "concept_ref": question.get("concept_ref")})
     state["requests"] = [*state["requests"], str(message.request_id)][-REQUEST_HISTORY_LIMIT:]
     return state
 
 
 def lesson_public(lesson_id, content, locale):
-    data = content[locale]
-    return {"id": lesson_id, **{key: data[key] for key in ("title", "subject", "chapter", "objective", "key_points")}}
+    data = localized_content(content, locale)
+    return {"id": lesson_id, "subject_id": content["subject_id"], "chapter_id": content["chapter_id"],
+            "concept_refs": data.get("concept_refs", []),
+            **{key: data[key] for key in ("title", "subject", "chapter", "objective", "key_points")}}
 
 
 def session_public(session, locale):
     state = session.state
-    questions = session.content[locale]["questions"]
+    questions = localized_content(session.content, locale)["questions"]
     # Explicit allow-list: never serialize answer keys, keywords or unrevealed hints.
-    visible = [{key: q[key] for key in ("id", "kind", "text", "options")}
+    visible = [{**{key: q[key] for key in ("id", "kind", "text", "options")}, "concept_ref": q.get("concept_ref")}
                for q in questions[:state["index"] + 1]]
     events = []
     for event in state["events"]:
@@ -140,7 +148,7 @@ def session_public(session, locale):
             "lesson": lesson_public(session.lesson_id, session.content, locale),
             "mock": True, "complete": state["complete"], "current_question_id": questions[state["index"]]["id"],
             "attempts": state["attempts"], "hint_level": state["hint_level"], "resolved": state["resolved"],
-            "can_hint": not state["complete"] and not state["resolved"] and state["hint_level"] < 3,
+            "can_hint": not state["complete"] and not state["resolved"] and state["hint_level"] < len(questions[state["index"]]["hints"]),
             "total_questions": len(questions), "questions": visible, "messages": events}
 
 
@@ -165,8 +173,13 @@ async def _owned_session(
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
-async def list_lessons(db: AsyncSession, locale: Locale) -> list[LessonOut]:
-    rows = (await db.execute(select(ReviewLesson).order_by(ReviewLesson.id))).scalars().all()
+async def list_lessons(db: AsyncSession, locale: Locale, chapter_id: str | None = None) -> list[LessonOut]:
+    statement = select(ReviewLesson).order_by(ReviewLesson.id)
+    if chapter_id is not None:
+        if await db.get(ReviewChapter, chapter_id) is None:
+            raise ReviewError("chapter_not_found", 404)
+        statement = statement.where(ReviewLesson.chapter_id == chapter_id)
+    rows = (await db.execute(statement)).scalars().all()
     return [LessonOut(**lesson_public(row.id, row.content, locale)) for row in rows]
 
 
@@ -189,6 +202,7 @@ async def create_or_resume_session(
     if lesson is None:
         raise ReviewError("lesson_not_found", 404)
 
+    localized_content(lesson.content, locale)
     session = ReviewSession(school_id=school_id, student_id=student_id, lesson_id=lesson.id,
                             content=lesson.content, state=initial_state(), version=0)
     db.add(session)

@@ -49,7 +49,7 @@ if state["resolved"] or state["hint_level"] >= len(question["hints"]):
 
 **Question:** Replace the literal with `len(questions[state["index"]]["hints"])`? If not, what enforces the 3-hint invariant on new content?
 
-> **Answer:**
+> **Answer:** Fixed in the catalog addition: can_hint now reads the current question’s hint count. A one-hint regression test covers the former mismatch.
 
 ---
 
@@ -71,7 +71,7 @@ Sessions snapshot `content` at creation, so a session created against an English
 
 **Question:** Which do you want — (a) validate both locales at the seed/insert boundary so bad content can't enter, (b) fall back to `en` at read time, or (c) raise a domain `ReviewError` so it surfaces as a clean 4xx instead of a 500? Note (b) changes response content for affected sessions; (a) and (c) do not.
 
-> **Answer:**
+> **Answer:** Catalog seeds validate both locales before insertion; missing lesson translations at runtime raise a domain conflict. No silent English fallback. Existing custom snapshots are not given invented translations.
 
 ---
 
@@ -100,7 +100,7 @@ The live client always populates `question_id` (`question_id: question?.id`), so
 
 **Question:** Require `question_id` for `chat` at the schema level too, or leave it optional and return a clearer domain code? Consider that `chat` → `help` legitimately doesn't need a question, so requiring it unconditionally is stricter than the behaviour demands.
 
-> **Answer:**
+> **Answer:** Unchanged in this catalog scope. The existing frontend always sends the current question_id. A separate contract decision is still needed for other chat clients; no API behavior has been silently tightened.
 
 ---
 
@@ -121,7 +121,7 @@ The only client today retries immediately after a timeout, so in practice no oth
 
 **Question:** Is "not re-applied, but state may have moved on" the intended contract? If yes, say so in `docs/review-companion.md` so it isn't re-litigated. If no, storing a per-request response snapshot costs storage on a JSON column that already has two growth caps — is that trade worth it for a mock?
 
-> **Answer:**
+> **Answer:** The intended retry contract returns current session state and does not reapply retained request IDs; documented in review-companion.md. History is bounded to 200 IDs and expected_version continues to guard stale writes.
 
 ---
 
@@ -142,7 +142,7 @@ These are two different things wearing similar URLs. Either:
 
 **Question:** (a) or (b)? If (b), what is the migration story for `review_sessions` rows created before D3/D4 land?
 
-> **Answer:**
+> **Answer:** The user authorized the persistent catalog and concept references, with AI remaining mock. No decision was made here to declare full Epic D compatibility or throw away pilot records. This change preserves existing sessions and adds known concept metadata; production assessment migration remains a separate decision.
 
 ---
 
@@ -158,7 +158,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** If B1 is (b), should `concept_ref` be added to the question schema now as a forward-compatibility measure, even though nothing consumes it yet? If B1 is (a), confirm this is intentionally deferred.
 
-> **Answer:**
+> **Answer:** Added stable concept_ref to seeded questions, public questions, and saved answer/feedback events. The migration enriches existing known Newton snapshots/events without altering scores or progress. Unknown custom mappings remain absent. D3 is not complete: a subject error taxonomy and production assessment are not part of the catalog request.
 
 ---
 
@@ -170,7 +170,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** This is a product-shape decision, not an implementation one, and it's blocking. Who owns it and when is it needed by? If it lands while this mock is in pilot, does the mock start writing to it, or stay isolated per B1?
 
-> **Answer:**
+> **Answer:** Still out of scope. No mastery record is written from mock scores. Product owner and delivery date are not specified by the current request.
 
 ---
 
@@ -184,7 +184,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** Does the mock need a student-facing summary card on completion (self-contained, no handoff), or is completion deliberately a dead end until D6? The client currently shows only a flat `t("complete")` string.
 
-> **Answer:**
+> **Answer:** Completion remains the existing saved state and chat event. No summary redesign or production profile/mastery handoff was authorized in the catalog request.
 
 ---
 
@@ -200,7 +200,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** For pilot use, is "review once, permanently" acceptable, or does a student re-studying before an exam need a fresh run? If a reset is needed, is it a new row (drop the unique constraint, which is a migration) or a reset-in-place endpoint (keeps the constraint, loses history)?
 
-> **Answer:**
+> **Answer:** The user explicitly chose one permanent session per school + student + lesson. Preserve the unique constraint and resume completed sessions; do not introduce resets or additional session rows.
 
 ---
 
@@ -210,7 +210,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 List the IDs and why. A closed question with a reason on record is more useful than a silently skipped one.
 
-> **Answer:**
+> **Answer:** B5 is an intentional user-approved scope difference from the older Epic D plan, not a catalog bug. A4 is current-state synchronization on replay, now explicitly documented. Other deferred items remain tracked rather than declared resolved.
 
 ---
 
@@ -218,7 +218,7 @@ List the IDs and why. A closed question with a reason on record is more useful t
 
 Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a human before code starts.
 
-> **Answer:**
+> **Answer:** Complete and verify the bilingual Subject → Chapter → Lesson catalog on top of the latest refactor. Future production D3/D4/D6 work needs the assessment, taxonomy and handoff decisions noted above.
 
 ---
 
@@ -226,15 +226,15 @@ Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a 
 
 | ID | Area | Type | Status |
 |----|------|------|--------|
-| A1 | `can_hint` hardcodes 3 | Bug — latent | Open |
-| A2 | Unknown locale → 500 | Bug — content-triggered | Open |
+| A1 | `can_hint` follows content | Bug | Fixed in catalog addition |
+| A2 | Missing translation handling | Bug | Seed validation + domain conflict |
 | A3 | `chat` without `question_id` | Bug — misleading error | Open |
-| A4 | Idempotent replay semantics | Contract — needs a written decision | Open |
+| A4 | Idempotent replay semantics | Contract | Documented current-state replay |
 | B1 | Throwaway vs foundation | **Gates B2–B5** | Open |
 | B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Open |
 | B3 | No `MasteryRecord` (D4) | Blocker — product decision | Open |
 | B4 | No close / handoff (D6) | Blocker | Open |
-| B5 | One session per lesson (D1/D2) | Scope | Open |
+| B5 | One session per lesson (D1/D2) | Scope | Explicit user decision: permanent |
 | — | DB in controller | Architecture | Fixed in `6a07f09` |
 | — | No `response_model` | Architecture | Fixed in `6a07f09` |
 | — | `HTTPException` in service | Architecture | Fixed in `6a07f09` |
