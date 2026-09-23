@@ -63,6 +63,8 @@ def apply_message(content, original, message: ReviewMessage):
     action = message.action
     if action == "chat":
         action = "help" if is_help(message.text) or question["kind"] == "choice" or state["resolved"] or state["complete"] else "answer"
+        if action == "answer" and not message.question_id:
+            fail("chat_question_id_required")
     if state["complete"] and action not in ("help",):
         fail("review_complete")
     if action in ("answer", "hint", "next") and message.question_id != question["id"]:

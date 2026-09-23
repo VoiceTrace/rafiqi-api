@@ -74,6 +74,16 @@ def test_invalid_and_stale_actions_do_not_mutate():
         apply_message(LESSON, state, ReviewMessage(**command("answer", option_id="equal")))
 
 
+def test_questionless_chat_that_becomes_an_answer_has_a_clear_error():
+    state = apply_message(LESSON, initial_state(), ReviewMessage(**command("answer", option_id="equal")))
+    state = apply_message(LESSON, state, ReviewMessage(**command("next")))
+    payload = command("chat", question=None, text="different objects")
+    with pytest.raises(ReviewError) as error:
+        apply_message(LESSON, state, ReviewMessage(**payload))
+    assert error.value.code == "chat_question_id_required"
+    assert state["attempts"] == 0 and state["resolved"] is False
+
+
 @pytest.mark.asyncio
 async def test_role_gate_without_dependency_override():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

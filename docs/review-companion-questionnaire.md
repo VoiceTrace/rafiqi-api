@@ -100,7 +100,7 @@ The live client always populates `question_id` (`question_id: question?.id`), so
 
 **Question:** Require `question_id` for `chat` at the schema level too, or leave it optional and return a clearer domain code? Consider that `chat` → `help` legitimately doesn't need a question, so requiring it unconditionally is stricter than the behaviour demands.
 
-> **Answer:** Unchanged in this catalog scope. The existing frontend always sends the current question_id. A separate contract decision is still needed for other chat clients; no API behavior has been silently tightened.
+> **Answer:** Fixed without tightening help requests. `chat` may still omit `question_id` when it is classified as help. A questionless chat classified as a written answer now returns the explicit domain conflict `chat_question_id_required`; a regression test protects this contract.
 
 ---
 
@@ -228,7 +228,7 @@ Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a 
 |----|------|------|--------|
 | A1 | `can_hint` follows content | Bug | Fixed in catalog addition |
 | A2 | Missing translation handling | Bug | Seed validation + domain conflict |
-| A3 | `chat` without `question_id` | Bug — misleading error | Open |
+| A3 | `chat` without `question_id` | Bug — misleading error | Fixed: clear domain conflict for answer-classified chat |
 | A4 | Idempotent replay semantics | Contract | Documented current-state replay |
 | B1 | Throwaway vs foundation | **Gates B2–B5** | Open |
 | B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Open |

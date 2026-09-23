@@ -25,6 +25,8 @@ All require an authenticated student. Read/create locale query is `en` or `ar` (
 
 Message fields: request_id, expected_version, action, optional question_id/text/option_id, locale. Question-scoped actions require the current question_id. Do not trust UI state: the service validates options, pending/resolved state, attempt limits, hint limits and completion. No bearer token should be passed into a frontend Client Component.
 
+`chat` may omit `question_id` when it is a help request. If its text is instead treated as a written answer, the API returns a structured `409` conflict with `Chat question id required`; it does not misreport the request as an ordinary question-scoped action.
+
 ## Mock behavior
 
 - Newton has a choice question followed by a written explanation. The other demo lessons each have a concept-specific choice question. No AI provider dependency.
