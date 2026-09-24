@@ -57,14 +57,17 @@ def test_catalog_migration_preserves_existing_session(monkeypatch):
         assert db.scalar(text("select count(*) from review_lessons")) == 4
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
+        assert db.scalar(text("select to_regclass('review_session_summaries')")) == "review_session_summaries"
     command.downgrade(config, "-1")
     with engine.connect() as db:
-        assert db.scalar(text("select to_regclass('mastery_records')")) is None
+        assert db.scalar(text("select to_regclass('review_session_summaries')")) is None
+        assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
     command.upgrade(config, "head")
     with engine.connect() as db:
         assert db.scalar(text("select count(*) from review_lessons")) == 4
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
+        assert db.scalar(text("select to_regclass('review_session_summaries')")) == "review_session_summaries"
         assert db.execute(sessions.select().where(sessions.c.id == sid)).mappings().one()["state"]["complete"]
     engine.dispose()

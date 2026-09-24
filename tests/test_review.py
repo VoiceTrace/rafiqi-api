@@ -17,7 +17,7 @@ from app.core.database import Base
 from app.core.security import create_access_token
 from app.main import app
 from app.models import School, User
-from app.models.review import MasteryRecord, ReviewAttempt, ReviewLesson, ReviewSession
+from app.models.review import MasteryRecord, ReviewAttempt, ReviewLesson, ReviewSession, ReviewSessionSummary
 from app.schemas.review import ReviewMessage
 from app.services.review import ReviewError, apply_message, initial_state, mastery_band, session_public
 from app.services.review_seed import LESSON
@@ -272,6 +272,56 @@ async def test_mastery_averages_latest_evidence_per_question(api):
     assert mastery[0]["evidence_count"] == 2
     assert mastery[0]["attempt_count"] == 2
     assert mastery[0]["dominant_error_type"] == "force_pair_incomplete_distinct_objects"
+
+
+@pytest.mark.asyncio
+async def test_completion_summary_is_idempotent_localized_and_student_safe(api):
+    client, identity, other_id, factory = api
+    session = (await client.post("/study-sessions", json={"lesson_id": "balanced-forces"})).json()
+    assert session["summary"] is None
+
+    hint = command("hint", question="balanced-forces-check")
+    answer = command("answer", version=1, question="balanced-forces-check", option_id="correct")
+    finish = command("next", version=2, question="balanced-forces-check")
+    for payload in (hint, answer):
+        response = await client.post(f"/study-sessions/{session['id']}/messages", json=payload)
+        assert response.status_code == 200, response.text
+
+    completed = await client.post(f"/study-sessions/{session['id']}/messages", json=finish)
+    assert completed.status_code == 200, completed.text
+    result = completed.json()
+    summary = result["summary"]
+    assert result["complete"] is True
+    assert summary["lesson_id"] == "balanced-forces"
+    assert summary["total_attempts"] == 1
+    assert summary["concepts"] == [{
+        "concept_ref": "net-force",
+        "title": "Net force",
+        "outcome": "secure",
+        "message": "You showed a strong understanding of Net force.",
+        "completed_with_support": True,
+    }]
+    assert "error_type" not in json.dumps(summary)
+    assert "mastery_score" not in json.dumps(summary)
+
+    replay = await client.post(f"/study-sessions/{session['id']}/messages", json=finish)
+    assert replay.status_code == 200
+    assert replay.json()["summary"] == summary
+    assert replay.json()["version"] == result["version"]
+
+    resumed = (await client.get(f"/study-sessions/{session['id']}")).json()
+    arabic = (await client.get(f"/study-sessions/{session['id']}?locale=ar")).json()
+    assert resumed["summary"] == summary
+    assert arabic["summary"]["id"] == summary["id"]
+    assert arabic["summary"]["lesson_title"] != summary["lesson_title"]
+    assert arabic["summary"]["concepts"][0]["message"] != summary["concepts"][0]["message"]
+
+    async with factory() as db:
+        summaries = (await db.execute(select(ReviewSessionSummary))).scalars().all()
+        assert len(summaries) == 1
+
+    identity["user"] = CurrentUser(other_id, identity["user"].school_id, "student")
+    assert (await client.get(f"/study-sessions/{session['id']}")).status_code == 404
 
 
 @pytest.mark.asyncio
