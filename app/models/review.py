@@ -123,3 +123,31 @@ class MasteryRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ReviewSessionSummary(Base):
+    """Immutable completion snapshot; public localized copy is derived at read time."""
+
+    __tablename__ = "review_session_summaries"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_review_summary_session"),
+        CheckConstraint("total_attempts >= 1", name="ck_review_summary_attempts"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    lesson_id: Mapped[str] = mapped_column(ForeignKey("review_lessons.id"), nullable=False)
+    concepts: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    total_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

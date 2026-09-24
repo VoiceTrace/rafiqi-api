@@ -69,6 +69,25 @@ class QuestionOut(BaseModel):
     concept_ref: str | None = None
 
 
+class SummaryConceptOut(BaseModel):
+    concept_ref: str
+    title: str
+    outcome: Literal["needs_support", "developing", "secure"]
+    message: str
+    completed_with_support: bool
+
+
+class SessionSummaryOut(BaseModel):
+    id: UUID
+    session_id: UUID
+    lesson_id: str
+    lesson_title: str
+    concepts: list[SummaryConceptOut]
+    total_attempts: int = Field(ge=1)
+    next_step: str
+    completed_at: datetime
+
+
 class SessionOut(BaseModel):
     id: str
     lesson_id: str
@@ -83,6 +102,7 @@ class SessionOut(BaseModel):
     can_hint: bool
     total_questions: int
     questions: list[QuestionOut]
+    summary: SessionSummaryOut | None = None
     # Transcript entries vary by `kind` (text/question/answer/feedback/hint/action/complete),
     # so they pass through untyped to keep the wire format byte-identical for existing clients.
     messages: list[dict[str, Any]]
