@@ -1,0 +1,2393 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Rafiqi API",
+    "description": "\n## Rafiqi API\n\nBackend for **Rafiqi** \u2014 an AI-powered education platform for teachers and students,\nbuilt for the Saudi Arabian (KSA) market.\n\n### Authentication\n\nAll protected endpoints require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer <access_token>\n```\n\nObtain a token pair by calling **POST /auth/login**. Access tokens are short-lived \u2014\nexchange the accompanying `refresh_token` for a new pair via **POST /auth/refresh**\nrather than logging in again. Call **POST /auth/logout** to revoke a refresh token.\n\n### Multi-tenancy\n\nEvery response is automatically scoped to the requesting user's school.\nA user from School A will never see data from School B \u2014 this is enforced\nserver-side and cannot be bypassed by the client.\n\n### Roles\n\n| Role | Description |\n|---|---|\n| `teacher` | Can view class rosters, generate lesson plans, run live sessions |\n| `student` | Can chat with Rafiqi, view their own profile, join live sessions |\n\nRoutes are role-protected \u2014 sending a teacher token to a student-only route\nreturns `403 Forbidden`.\n\n### Error shape\n\nAll errors follow a consistent shape:\n\n```json\n{\n  \"detail\": {\n    \"error\": {\n      \"code\": \"unauthorized\",\n      \"message\": \"Invalid or expired token\"\n    }\n  }\n}\n```\n\nKnown error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `internal_error`.\n",
+    "contact": {
+      "name": "EntraI Engineering",
+      "email": "eng@entrai.com"
+    },
+    "license": {
+      "name": "Private \u2014 EntraI"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login",
+        "description": "Authenticate with email and password. Returns a signed access token plus a\nrefresh token.\n\nThe access token payload contains:\n- **sub** \u2014 user ID\n- **school_id** \u2014 the user's school (all data is scoped to this)\n- **role** \u2014 `teacher` or `student`\n- **exp** \u2014 expiry (`ACCESS_TOKEN_EXPIRE_MINUTES` from issue)\n\nPass the access token in every subsequent request:\n```\nAuthorization: Bearer <access_token>\n```\n\nWhen it expires, use `POST /auth/refresh` with the `refresh_token` to get a\nnew pair without asking the user to log in again.",
+        "operationId": "login_route_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful login \u2014 returns a signed access token and a refresh token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": {
+                    "error": {
+                      "code": "unauthorized",
+                      "message": "Invalid credentials"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh access token",
+        "description": "Exchange a refresh token for a new access/refresh token pair.\n\nRefresh tokens rotate on every use: the one you send is revoked and a new\none is returned in its place. Reusing an already-exchanged (or logged-out)\nrefresh token fails with 401.",
+        "operationId": "refresh_route_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refresh token is invalid, expired, already used, or the account is inactive."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "Revoke a refresh token so it can no longer be exchanged for a new access token.\n\nThis does not invalidate an already-issued access token \u2014 it stays valid\nuntil it naturally expires (up to `ACCESS_TOKEN_EXPIRE_MINUTES`), which is\nwhy access tokens are kept short-lived. Always returns 204, whether or not\nthe token was found, so the response never reveals whether it existed.",
+        "operationId": "logout_route_auth_logout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Refresh token revoked. Same response whether or not it was found."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get own profile",
+        "description": "Returns the authenticated user's own record. Available to both roles.",
+        "operationId": "get_me_users_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update own profile",
+        "description": "Update own `full_name` and/or `password`. Available to both roles.",
+        "operationId": "update_me_users_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSelfUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/users/me/avatar": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Upload own avatar",
+        "description": "Upload a profile photo. Accepts JPEG, PNG or WebP, maximum 5 MB.\nReturns the updated user with `avatar_url` set to `/media/avatars/{id}.{ext}`.\nThe frontend prefixes this path with the API base URL to build the full image URL.\n\nAvailable to both roles (own avatar only).",
+        "operationId": "upload_own_avatar_users_me_avatar_put",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_own_avatar_users_me_avatar_put"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file type (JPEG, PNG, WebP only)."
+          },
+          "413": {
+            "description": "File exceeds 5 MB limit."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Remove own avatar",
+        "description": "Remove own profile photo. Sets `avatar_url` to null. Available to both roles.",
+        "operationId": "remove_own_avatar_users_me_avatar_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List users in school",
+        "description": "Returns all users in the teacher's school, ordered by name.\n\n- No `role` filter \u2192 returns teachers **and** students.\n- `?role=student` \u2192 students only.\n- `?role=teacher` \u2192 teachers only.\n\nTeacher access only.",
+        "operationId": "list_users_users_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(teacher|student)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by role",
+              "title": "Role"
+            },
+            "description": "Filter by role"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserRead"
+                  },
+                  "title": "Response List Users Users Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create user",
+        "description": "Create a new student or teacher in the same school as the requesting teacher.\n\nTeacher access only.",
+        "operationId": "create_user_users_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email already registered."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get user by ID",
+        "description": "Fetch any user by ID \u2014 scoped to the teacher's school.\nReturns 404 if the user doesn't exist **or** belongs to a different school.\n\nTeacher access only.",
+        "operationId": "get_user_users__user_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found in this school."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update user",
+        "description": "Update another user's `full_name` or `is_active` status.\nTo update your own record, use `PATCH /users/me`.\n\nTeacher access only.",
+        "operationId": "update_user_users__user_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found in this school."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Deactivate user",
+        "description": "Soft-deactivate a user (sets `is_active=false`). Deactivated users cannot log in.\nReturns the updated user record.\n\nA teacher cannot deactivate their own account.\nTeacher access only.",
+        "operationId": "deactivate_user_users__user_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cannot deactivate your own account."
+          },
+          "404": {
+            "description": "User not found in this school."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}/avatar": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Upload avatar for user",
+        "description": "Upload a profile photo for any user in the school. Teacher access only.",
+        "operationId": "upload_user_avatar_users__user_id__avatar_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_user_avatar_users__user_id__avatar_put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported file type."
+          },
+          "404": {
+            "description": "User not found in this school."
+          },
+          "413": {
+            "description": "File exceeds 5 MB limit."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Remove avatar for user",
+        "description": "Remove a profile photo for any user in the school. Teacher access only.",
+        "operationId": "remove_user_avatar_users__user_id__avatar_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found in this school."
+          },
+          "403": {
+            "description": "Teacher access required."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-subjects": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Subjects",
+        "operationId": "subjects_study_subjects_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SubjectOut"
+                  },
+                  "title": "Response Subjects Study Subjects Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-subjects/{subject_id}/chapters": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Chapters",
+        "operationId": "chapters_study_subjects__subject_id__chapters_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChapterOut"
+                  },
+                  "title": "Response Chapters Study Subjects  Subject Id  Chapters Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-lessons": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Lessons",
+        "operationId": "lessons_study_lessons_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          },
+          {
+            "name": "chapter_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chapter Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LessonOut"
+                  },
+                  "title": "Response Lessons Study Lessons Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-lessons/{lesson_id}": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Lesson",
+        "operationId": "lesson_study_lessons__lesson_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lesson_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Lesson Id"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions": {
+      "post": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Create",
+        "operationId": "create_study_sessions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReview"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/by-lesson/{lesson_id}": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "By Lesson",
+        "operationId": "by_lesson_study_sessions_by_lesson__lesson_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lesson_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Lesson Id"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Get Session",
+        "operationId": "get_session_study_sessions__session_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "ar"
+              ],
+              "type": "string",
+              "default": "en",
+              "title": "Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/attempts": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Attempts",
+        "operationId": "attempts_study_sessions__session_id__attempts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttemptOut"
+                  },
+                  "title": "Response Attempts Study Sessions  Session Id  Attempts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-mastery": {
+      "get": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Mastery",
+        "operationId": "mastery_study_mastery_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MasteryOut"
+                  },
+                  "type": "array",
+                  "title": "Response Mastery Study Mastery Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/study-sessions/{session_id}/messages": {
+      "post": {
+        "tags": [
+          "study-review"
+        ],
+        "summary": "Send Message",
+        "operationId": "send_message_study_sessions__session_id__messages_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewMessage"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health check",
+        "description": "Returns `ok` when the service is running. No auth required.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AttemptOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "question_id": {
+            "type": "string",
+            "title": "Question Id"
+          },
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "response_text": {
+            "type": "string",
+            "title": "Response Text"
+          },
+          "option_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Id"
+          },
+          "correctness_score": {
+            "type": "number",
+            "title": "Correctness Score"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "hint_level": {
+            "type": "integer",
+            "title": "Hint Level"
+          },
+          "assisted": {
+            "type": "boolean",
+            "title": "Assisted"
+          },
+          "attempt_number": {
+            "type": "integer",
+            "title": "Attempt Number"
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "ar"
+            ],
+            "title": "Locale"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "lesson_id",
+          "question_id",
+          "concept_ref",
+          "response_text",
+          "option_id",
+          "correctness_score",
+          "error_type",
+          "hint_level",
+          "assisted",
+          "attempt_number",
+          "locale",
+          "created_at"
+        ],
+        "title": "AttemptOut"
+      },
+      "Body_upload_own_avatar_users_me_avatar_put": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_own_avatar_users_me_avatar_put"
+      },
+      "Body_upload_user_avatar_users__user_id__avatar_put": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_user_avatar_users__user_id__avatar_put"
+      },
+      "ChapterOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "subject_id": {
+            "type": "string",
+            "title": "Subject Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "subject_id"
+        ],
+        "title": "ChapterOut"
+      },
+      "ConceptOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "description"
+        ],
+        "title": "ConceptOut"
+      },
+      "CreateReview": {
+        "properties": {
+          "lesson_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lesson Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_id"
+        ],
+        "title": "CreateReview"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LessonOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "title": "Chapter"
+          },
+          "objective": {
+            "type": "string",
+            "title": "Objective"
+          },
+          "key_points": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Key Points"
+          },
+          "subject_id": {
+            "type": "string",
+            "title": "Subject Id"
+          },
+          "chapter_id": {
+            "type": "string",
+            "title": "Chapter Id"
+          },
+          "concept_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ConceptOut"
+            },
+            "type": "array",
+            "title": "Concept Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "subject",
+          "chapter",
+          "objective",
+          "key_points",
+          "subject_id",
+          "chapter_id",
+          "concept_refs"
+        ],
+        "title": "LessonOut"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "examples": [
+              "teacher@alnoor.edu.sa"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Password",
+            "examples": [
+              "teacher123"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "examples": [
+          {
+            "summary": "Teacher login",
+            "value": {
+              "email": "teacher@alnoor.edu.sa",
+              "password": "teacher123"
+            }
+          },
+          {
+            "summary": "Student login",
+            "value": {
+              "email": "student@alnoor.edu.sa",
+              "password": "student123"
+            }
+          }
+        ]
+      },
+      "LogoutRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "examples": [
+              "k3s9F1x...long-random-string"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "LogoutRequest"
+      },
+      "MasteryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Id"
+          },
+          "subject_id": {
+            "type": "string",
+            "title": "Subject Id"
+          },
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "mastery_score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mastery Score"
+          },
+          "mastery_band": {
+            "type": "string",
+            "enum": [
+              "needs_support",
+              "developing",
+              "secure"
+            ],
+            "title": "Mastery Band"
+          },
+          "evidence_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Evidence Count"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Attempt Count"
+          },
+          "assisted_evidence_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Assisted Evidence Count"
+          },
+          "dominant_error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dominant Error Type"
+          },
+          "calculation_version": {
+            "type": "string",
+            "title": "Calculation Version"
+          },
+          "last_attempt_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Attempt At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "subject_id",
+          "concept_ref",
+          "mastery_score",
+          "mastery_band",
+          "evidence_count",
+          "attempt_count",
+          "assisted_evidence_count",
+          "dominant_error_type",
+          "calculation_version",
+          "last_attempt_at",
+          "updated_at"
+        ],
+        "title": "MasteryOut"
+      },
+      "QuestionOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "QuestionOption"
+      },
+      "QuestionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "choice",
+              "written"
+            ],
+            "title": "Kind"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "concept_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Ref"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "options"
+        ],
+        "title": "QuestionOut",
+        "description": "Safe projection of a question \u2014 answer keys, keywords and hints are excluded."
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "examples": [
+              "k3s9F1x...long-random-string"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest"
+      },
+      "ReviewMessage": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Version"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "answer",
+              "hint",
+              "help",
+              "next"
+            ],
+            "title": "Action"
+          },
+          "question_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Text",
+            "default": ""
+          },
+          "option_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Id"
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "ar"
+            ],
+            "title": "Locale",
+            "default": "en"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_version",
+          "action"
+        ],
+        "title": "ReviewMessage"
+      },
+      "SessionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/LessonOut"
+          },
+          "mock": {
+            "type": "boolean",
+            "title": "Mock"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete"
+          },
+          "current_question_id": {
+            "type": "string",
+            "title": "Current Question Id"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "hint_level": {
+            "type": "integer",
+            "title": "Hint Level"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved"
+          },
+          "can_hint": {
+            "type": "boolean",
+            "title": "Can Hint"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOut"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messages": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "lesson_id",
+          "version",
+          "lesson",
+          "mock",
+          "complete",
+          "current_question_id",
+          "attempts",
+          "hint_level",
+          "resolved",
+          "can_hint",
+          "total_questions",
+          "questions",
+          "messages"
+        ],
+        "title": "SessionOut"
+      },
+      "SessionSummaryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "lesson_title": {
+            "type": "string",
+            "title": "Lesson Title"
+          },
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryConceptOut"
+            },
+            "type": "array",
+            "title": "Concepts"
+          },
+          "total_attempts": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Total Attempts"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "lesson_id",
+          "lesson_title",
+          "concepts",
+          "total_attempts",
+          "next_step",
+          "completed_at"
+        ],
+        "title": "SessionSummaryOut"
+      },
+      "SubjectOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "SubjectOut"
+      },
+      "SummaryConceptOut": {
+        "properties": {
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "needs_support",
+              "developing",
+              "secure"
+            ],
+            "title": "Outcome"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "completed_with_support": {
+            "type": "boolean",
+            "title": "Completed With Support"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_ref",
+          "title",
+          "outcome",
+          "message",
+          "completed_with_support"
+        ],
+        "title": "SummaryConceptOut"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token",
+            "description": "Signed JWT. Include in every protected request as: `Authorization: Bearer <access_token>`",
+            "examples": [
+              "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            ]
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "description": "Opaque token used to obtain a new access token via `POST /auth/refresh`. Store it securely \u2014 it is not a JWT and cannot be decoded.",
+            "examples": [
+              "k3s9F1x...long-random-string"
+            ]
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer",
+            "examples": [
+              "bearer"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "refresh_token"
+        ],
+        "title": "TokenResponse",
+        "examples": [
+          {
+            "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZjU3ZDBmMiIsInNjaG9vbF9pZCI6ImY5OGIzYTQ5Iiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3ODkzMzg1MDB9.signature",
+            "refresh_token": "k3s9F1x...long-random-string",
+            "token_type": "bearer"
+          }
+        ]
+      },
+      "UserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "examples": [
+              "student@alnoor.edu.sa"
+            ]
+          },
+          "full_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Full Name",
+            "examples": [
+              "Sara Al-Otaibi"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "student"
+            ],
+            "title": "Role",
+            "examples": [
+              "student"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "title": "Password",
+            "examples": [
+              "securepass123"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "full_name",
+          "role",
+          "password"
+        ],
+        "title": "UserCreate",
+        "examples": [
+          {
+            "summary": "Create student",
+            "value": {
+              "email": "new.student@alnoor.edu.sa",
+              "full_name": "Khalid Al-Zahrani",
+              "password": "securepass123",
+              "role": "student"
+            }
+          }
+        ]
+      },
+      "UserRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "school_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "School Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "school_id",
+          "email",
+          "full_name",
+          "role",
+          "is_active",
+          "avatar_url",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserRead"
+      },
+      "UserSelfUpdate": {
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 8
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "title": "UserSelfUpdate",
+        "description": "Any user updating their own record \u2014 name or password."
+      },
+      "UserUpdate": {
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "UserUpdate",
+        "description": "Teacher updating another user \u2014 name or active status only."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Login and obtain a JWT access token."
+    },
+    {
+      "name": "users",
+      "description": "User management \u2014 CRUD for teachers and students within a school. `GET /users/me` and `PATCH /users/me` are available to both roles. All other routes are teacher-only."
+    },
+    {
+      "name": "profiles",
+      "description": "Student profile \u2014 traits, confidence scores, teaching tips. Built automatically from Cave chat (A2/A3). Teachers read; students see their own."
+    },
+    {
+      "name": "conversations",
+      "description": "Cave chat sessions between a student and Rafiqi (A2). Each session produces profile trait updates (A3)."
+    },
+    {
+      "name": "lessons",
+      "description": "Lesson prep \u2014 objectives, flow, check-questions (B1/B2/B3)."
+    },
+    {
+      "name": "sessions",
+      "description": "Live class sessions \u2014 start, join, real-time sync (C1/C2)."
+    },
+    {
+      "name": "health",
+      "description": "Service health check."
+    }
+  ]
+}
