@@ -1,0 +1,23 @@
+sequenceDiagram
+    actor Client
+    participant API as Auth routes
+    participant Service as Auth service
+    participant DB as PostgreSQL
+    Client->>API: POST /auth/login (email, password)
+    API->>Service: login
+    Service->>DB: Find user by globally unique email
+    Note over Service: Verify password and is_active
+    Service->>DB: Insert hashed refresh token and commit
+    Service-->>Client: Access JWT and raw refresh token
+    Client->>API: POST /auth/refresh (raw refresh token)
+    API->>Service: refresh_access_token
+    Service->>DB: Look up token hash and user
+    Note over Service: Check expiry, revocation and active user
+    Service->>DB: Revoke old token and commit
+    Service->>DB: Insert new hashed token and commit
+    Service-->>Client: New access JWT and refresh token
+    Client->>API: POST /auth/logout (raw refresh token)
+    API->>Service: logout
+    Service->>DB: Revoke token if still active, commit when changed
+    API-->>Client: 204
+    Note over Client,Service: Already-issued access JWT remains valid until expiry

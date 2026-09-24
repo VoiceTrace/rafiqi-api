@@ -1,0 +1,28 @@
+flowchart TB
+    Client["Teacher or student client"] --> CORS["FastAPI / CORS middleware"]
+    CORS --> Auth["Auth routes: login, refresh, logout"]
+    CORS --> JWT["Bearer JWT dependency: user ID, school ID, role"]
+    JWT --> Users["User routes: own account and teacher-managed users"]
+    JWT --> Review["Student-only catalog and study review routes"]
+    Auth --> AuthSvc["auth service / password and token helpers"]
+    Users --> UserSvc["user service"]
+    Review --> Catalog["review_catalog service"]
+    Review --> ReviewSvc["review service / deterministic assessment"]
+    ReviewSvc --> Assessment["review_assessment: concept error taxonomy"]
+    AuthSvc --> Session["SQLAlchemy AsyncSession / explicit commits"]
+    UserSvc --> Session
+    Catalog --> Session
+    ReviewSvc --> Session
+    Session --> DB[("PostgreSQL / 13 application tables")]
+    UserSvc --> Files["Local media/avatars files"]
+    CORS --> Static["Public /media static mount"]
+    Static --> Files
+    CORS --> Health["GET /health: process status"]
+    CORS --> Docs["OpenAPI / Swagger / ReDoc"]
+    Alembic["Alembic: 9 committed migrations and seed fixtures"] --> DB
+    Seed["Development seed and review catalog loaders"] --> DB
+    Config["Environment settings"] -.-> CORS
+    Config -.-> Session
+    Schemas["Pydantic request and response schemas"] -.-> Users
+    Schemas -.-> Review
+    Schemas -.-> Auth
