@@ -1,0 +1,33 @@
+sequenceDiagram
+    actor Student
+    participant API as Student-only routes
+    participant Service as Review service
+    participant DB as PostgreSQL
+    Student->>API: POST /study-sessions (lesson_id)
+    API->>Service: create_or_resume_session (token user and school)
+    Service->>DB: Find session by school, student and lesson
+    alt Existing session
+        Service-->>Student: Resume session (200)
+    else New session
+        Service->>DB: Read lesson, insert content snapshot and initial state, commit
+        Service-->>Student: New session (201)
+    end
+    Student->>API: POST messages (request_id, expected_version, action, locale)
+    API->>Service: process_message
+    Service->>DB: SELECT owned session FOR UPDATE
+    alt Request ID already in recent history
+        Service-->>Student: Current session, no mutation
+    else Version mismatch
+        Service-->>Student: 409 stale_session
+    else Valid request
+        Note over Service: Validate action and question, apply deterministic state transition
+        opt Action produces an answer
+            Service->>DB: Insert attempt, flush
+            Service->>DB: Read concept evidence, upsert mastery
+        end
+        opt Transition to complete
+            Service->>DB: Recalculate concept mastery and insert one completion summary
+        end
+        Service->>DB: Commit state, version and evidence together, refresh session
+        Service-->>Student: Safe localized session projection and optional summary
+    end
