@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from app.core.config import settings
+from app.services.review_catalog import seed_catalog
 from app.core.security import hash_password
 from app.models.school import School
 from app.models.user import User, UserRole
@@ -21,6 +22,10 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 async def seed():
     async with AsyncSessionLocal() as db:
+        await seed_catalog(db)
+        if "--catalog-only" in sys.argv:
+            print("Catalog seed complete (existing rows preserved).")
+            return
         # School
         school = School(id=uuid.uuid4(), name="Al-Noor Academy")
         db.add(school)

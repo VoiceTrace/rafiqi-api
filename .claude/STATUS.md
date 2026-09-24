@@ -8,7 +8,7 @@
 - **Epic C (during-class) deferred to v2** — no realtime infrastructure in v1
 - **Epic D (Study Sessions) added** — 6 tickets, replaces C as source of behavioural/performance data
 - **Epic E (Homework Generation) added** — 5 tickets, differentiated per student from mastery data
-- **`MasteryRecord` (D4) is now a blocker** for Epic E — concept-level mastery must exist before targeted homework can be generated
+- **`MasteryRecord` (D4) MVP is implemented** — concept-level records now exist; ClassGroup aggregation is still required before Epic E
 - **A8 must be resolved before A1 is finalised** — A8 determines schema, retention rules, and compliance surface
 
 ---
@@ -96,7 +96,7 @@
 - `category`: "preferences" | "goals"
 - `source_conversation_id` on `ProfileTrait`: FK to conversations, wired for A4
 
-**⚠ Revision 2 note:** A1 schema will need extension to reference `MasteryRecord` (D4). Do not treat A1 as fully closed until D4's model shape is decided (see Open Decisions).
+**Revision 2 note:** The D4 MVP `MasteryRecord` model now exists. A future A1/Profile integration should reference it without merging mastery into narrative profile traits.
 
 ---
 
@@ -127,7 +127,6 @@
 | **A8: parent-visible output policy** | E3 | Epic E sends output to the home — widens compliance surface |
 | **A3: promotion rule** (forming → confident) | A3 | Number of observations? Consistency across subjects? Elapsed time? |
 | **A6: disclosure rule** | A6 | Narrative reads only — no numeric scores, no comparative framing |
-| **D4: mastery model shape** | D3, D4, E1–E5 | What is a `MasteryRecord`? Attempts, outcomes, dominant error pattern per concept |
 | **N6: school validation call** | E (whole epic) | Confirm device access in class and homework policy by year group before Epic E is built |
 | **B5: participation mechanics** | B5, B6 | Reminder timing, definition of completion, behaviour at low participation |
 | **B6: coverage threshold** | B6 | Below threshold the card states low coverage, not a class-level claim |
@@ -145,3 +144,5 @@
 - **E3 format constraint**: self-checking formats only (single correct answer, MCQ, spot-the-error) — no human marking required
 - **Visible differentiation (E3)**: same item count and presentation across class; variation in scaffolding and concept focus only — no student-visible difficulty label
 - **Trust principle (B3, A5, A9, E4)**: Rafiqi proposes, the human decides — applies everywhere
+- **D4 MVP mastery policy**: latest attempt per lesson/question is current evidence; average correctness maps to `needs_support` (<0.5), `developing` (0.5–<0.8), or `secure` (>=0.8); retries correct the projection while preserving attempts; confidence and evidence windows are deferred
+- **D6 MVP completion policy**: the final transition atomically refreshes D4 and creates one immutable, bilingual-rendered session summary; replay/reload returns the same summary; profile and homework automation are deferred
