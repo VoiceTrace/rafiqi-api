@@ -27,6 +27,8 @@ All require an authenticated student. Read/create locale query is `en` or `ar` (
 
 Message fields: request_id, expected_version, action, optional question_id/text/option_id, locale. Question-scoped actions require the current question_id. Do not trust UI state: the service validates options, pending/resolved state, attempt limits, hint limits and completion. No bearer token should be passed into a frontend Client Component.
 
+Every session response includes additive `summary`. It is `null` before completion and contains the localized D6 completion card after the final resolved question advances. Existing session fields are unchanged.
+
 `chat` may omit `question_id` when it is a help request. If its text is instead treated as a written answer, the API returns a structured `409` conflict with `Chat question id required`; it does not misreport the request as an ordinary question-scoped action.
 
 ## Mock behavior
@@ -36,10 +38,10 @@ Message fields: request_id, expected_version, action, optional question_id/text/
 - A correct answer or three attempts enables next. After the third unsuccessful attempt, include the explanation.
 - Explicit help, questions matching the small English/Arabic help detector, and free text while a choice question is active return a canned explanation without consuming attempts. Written declarative responses are treated as answers. This limited intent heuristic is a mock limitation; the future AI provider must preserve the distinction.
 - Hint requests reveal one of the question’s stored levels and persist the shown level. Each attempt records hint_level and whether help was supplied. Explanations/hints stay in the transcript.
-- Next after the final resolved question completes the session. Help remains available after completion.
+- Next after the final resolved question completes the session, refreshes D4 mastery and creates the one D6 summary in the same transaction. Help remains available after completion.
 - Authored question/objective content follows the requested locale. Historical user messages and feedback retain their original language; changing locale does not rewrite history.
 
-Excluded: homework, teacher Q&A, timeline, self-check, notes, materials, live classes, class-level mastery aggregation and profile extraction. Do not merge the old D1 router alongside this router: they share URL names but have different contracts.
+Excluded: homework, teacher Q&A, timeline, self-check, notes, materials, live classes, class-level mastery aggregation and profile extraction. The MVP D6 handoff ends at D4 mastery. Do not merge the old D1 router alongside this router: they share URL names but have different contracts.
 
 ## Verification
 
@@ -114,6 +116,14 @@ The approved `mvp-v1` calculation is deliberately small:
 - Record total attempts, current evidence count, assisted evidence count, calculation version and last-attempt time.
 - Use all evidence in the seeded MVP database. Confidence and time-based evidence windows are intentionally excluded.
 
-The attempt table remains the source of truth, so records can be rebuilt when the calculation changes. Class-group aggregation is deferred until a `ClassGroup` model exists. D6 student summary and profile handoff remain separate work.
+The attempt table remains the source of truth, so records can be rebuilt when the calculation changes. Class-group aggregation is deferred until a `ClassGroup` model exists. Profile handoff remains separate work.
 
-Validation: 76 tests passed with PostgreSQL enabled, including mastery thresholds, retry correction, multi-question averaging, role/tenant isolation, hierarchy filtering, ownership/concurrency, seed reruns, and migration upgrade/downgrade/re-upgrade.
+## D6 idempotent completion summary and D4 handoff (2026-09-24)
+
+The final `next` transition creates one immutable `review_session_summaries` row, protected by a unique session constraint. In the same transaction the service recomputes every concept represented by the session's attempts, stores a structured language-independent snapshot, marks the session complete, and commits. A failure rolls back the whole transition. Retrying the accepted request, resuming by lesson, or reloading by session returns the existing summary and never duplicates it.
+
+The session response exposes `summary: null | SessionSummary`. Public summary concepts contain localized title, categorical outcome, supportive message and whether the current evidence used help. They do not expose numeric mastery scores or raw error taxonomy. `next_step` focuses on the weakest concept, or confirms readiness to continue when all concepts are secure. English and Arabic copy is rendered from the same stored snapshot.
+
+The MVP handoff ends at `MasteryRecord`; automatic learner-profile changes and homework generation remain deferred. This keeps the completion flow verifiable without silently changing the narrative profile.
+
+Validation: 77 tests passed with PostgreSQL enabled, including summary idempotency, English/Arabic rendering, retry/reload stability, student-safe output, mastery thresholds, role/tenant isolation, concurrency, and migration upgrade/downgrade/re-upgrade.

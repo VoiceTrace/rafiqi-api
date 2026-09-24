@@ -145,3 +145,4 @@
 - **Visible differentiation (E3)**: same item count and presentation across class; variation in scaffolding and concept focus only — no student-visible difficulty label
 - **Trust principle (B3, A5, A9, E4)**: Rafiqi proposes, the human decides — applies everywhere
 - **D4 MVP mastery policy**: latest attempt per lesson/question is current evidence; average correctness maps to `needs_support` (<0.5), `developing` (0.5–<0.8), or `secure` (>=0.8); retries correct the projection while preserving attempts; confidence and evidence windows are deferred
+- **D6 MVP completion policy**: the final transition atomically refreshes D4 and creates one immutable, bilingual-rendered session summary; replay/reload returns the same summary; profile and homework automation are deferred

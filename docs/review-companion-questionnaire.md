@@ -184,7 +184,7 @@ Note that adding `concept_ref` to the *question content* is close to free right 
 
 **Question:** Does the mock need a student-facing summary card on completion (self-contained, no handoff), or is completion deliberately a dead end until D6? The client currently shows only a flat `t("complete")` string.
 
-> **Answer:** D6 remains open. Completion keeps the existing saved state and chat event; it must next gain a student-facing summary. Mastery needs no duplicate completion write because it is transactionally recalculated after each answer. Profile handoff remains deferred.
+> **Answer:** Completed for the MVP. The final transition refreshes every affected D4 record and creates one immutable structured summary in the same transaction. A unique session constraint plus request-id replay makes the handoff idempotent. Session responses return `summary: null` before completion and localized, student-friendly concept outcomes afterward, without numeric mastery or raw taxonomy. Profile and homework automation remain deferred.
 
 ---
 
@@ -218,7 +218,7 @@ List the IDs and why. A closed question with a reason on record is more useful t
 
 Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a human before code starts.
 
-> **Answer:** D5 keeps the current bounded hint ladder and persisted assistance signal. After that, D6 adds the student-facing session summary and completion handoff. Profile and homework automation remain deferred.
+> **Answer:** Backend D3–D6 MVP support is complete. The next ticket is the separate frontend completion-card integration. Profile and homework automation remain deferred.
 
 ---
 
@@ -233,7 +233,7 @@ Name one. If it's an Epic D blocker (B2/B3/B4), say what has to be decided by a 
 | B1 | Throwaway vs foundation | **Gates B2–B5** | Seeded MVP foundation; no old-data migration |
 | B2 | No `concept_ref` (D3) | Blocker — cheap now, expensive later | Fixed for curated catalog: persistent attempts + subject taxonomy |
 | B3 | No `MasteryRecord` (D4) | Blocker — product decision | Fixed for MVP; class aggregation deferred |
-| B4 | No close / handoff (D6) | Blocker | Open |
+| B4 | No close / handoff (D6) | Blocker | Fixed for MVP: summary + D4 handoff; profile deferred |
 | B5 | One session per lesson (D1/D2) | Scope | Explicit user decision: permanent |
 | — | DB in controller | Architecture | Fixed in `6a07f09` |
 | — | No `response_model` | Architecture | Fixed in `6a07f09` |
