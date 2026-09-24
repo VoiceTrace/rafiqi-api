@@ -8,7 +8,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.review import MasteryRecord, ReviewAttempt, ReviewChapter, ReviewLesson, ReviewSession
+from app.models.review import (
+    MasteryRecord,
+    ReviewAttempt,
+    ReviewChapter,
+    ReviewLesson,
+    ReviewSession,
+    ReviewSessionSummary,
+)
 from app.schemas.review import AttemptOut, LessonOut, Locale, MasteryOut, ReviewMessage, SessionOut
 from app.services.review_assessment import AssessmentMetadataError, classify_error
 
@@ -24,6 +31,33 @@ COPY = {
     "retry": {"en": "Not quite yet. Try again or reveal a hint.", "ar": "ليست الإجابة المطلوبة بعد. حاول مرة أخرى أو اطلب تلميحاً."},
     "complete": {"en": "Review complete. You can still ask for help with this lesson.", "ar": "اكتملت المراجعة. يمكنك الاستمرار في طلب المساعدة في هذا الدرس."},
     "help": {"en": "Demo explanation: ", "ar": "شرح تجريبي: "},
+}
+
+SUMMARY_COPY = {
+    "secure": {
+        "en": "You showed a strong understanding of {concept}.",
+        "ar": "أظهرت فهماً جيداً لمفهوم {concept}.",
+    },
+    "developing": {
+        "en": "You are building your understanding of {concept}.",
+        "ar": "أنت تطور فهمك لمفهوم {concept}.",
+    },
+    "needs_support": {
+        "en": "Keep practising {concept}; it is not settled yet.",
+        "ar": "استمر في التدريب على {concept}؛ ما زال يحتاج إلى تثبيت.",
+    },
+    "next_secure": {
+        "en": "You are ready to continue to the next lesson.",
+        "ar": "أنت مستعد للانتقال إلى الدرس التالي.",
+    },
+    "next_developing": {
+        "en": "Review {concept} once more before moving on.",
+        "ar": "راجع {concept} مرة أخرى قبل الانتقال.",
+    },
+    "next_needs_support": {
+        "en": "Practise {concept} again and use the hints when you need them.",
+        "ar": "تدرّب على {concept} مرة أخرى واستخدم التلميحات عند الحاجة.",
+    },
 }
 
 
@@ -157,6 +191,42 @@ def session_public(session, locale):
             "total_questions": len(questions), "questions": visible, "messages": events}
 
 
+def summary_public(session: ReviewSession, summary: ReviewSessionSummary, locale: Locale) -> dict:
+    content = localized_content(session.content, locale)
+    titles = {item["id"]: item["title"] for item in content.get("concept_refs", [])}
+    concepts = []
+    for item in summary.concepts:
+        title = titles.get(item["concept_ref"], item["concept_ref"])
+        outcome = item["mastery_band"]
+        concepts.append({
+            "concept_ref": item["concept_ref"],
+            "title": title,
+            "outcome": outcome,
+            "message": SUMMARY_COPY[outcome][locale].format(concept=title),
+            "completed_with_support": item["completed_with_support"],
+        })
+
+    weakest = min(
+        concepts,
+        key=lambda item: {"needs_support": 0, "developing": 1, "secure": 2}[item["outcome"]],
+    )
+    next_key = {
+        "needs_support": "next_needs_support",
+        "developing": "next_developing",
+        "secure": "next_secure",
+    }[weakest["outcome"]]
+    return {
+        "id": summary.id,
+        "session_id": summary.session_id,
+        "lesson_id": summary.lesson_id,
+        "lesson_title": content["title"],
+        "concepts": concepts,
+        "total_attempts": summary.total_attempts,
+        "next_step": SUMMARY_COPY[next_key][locale].format(concept=weakest["title"]),
+        "completed_at": summary.completed_at,
+    }
+
+
 # ── Persistence ───────────────────────────────────────────────────────────────
 
 async def _owned_session(
@@ -176,6 +246,36 @@ async def _owned_session(
     if lock:
         stmt = stmt.with_for_update()
     return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _owned_summary(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    session_id: uuid.UUID,
+) -> ReviewSessionSummary | None:
+    return (await db.execute(
+        select(ReviewSessionSummary).where(
+            ReviewSessionSummary.session_id == session_id,
+            ReviewSessionSummary.student_id == student_id,
+            ReviewSessionSummary.school_id == school_id,
+        )
+    )).scalar_one_or_none()
+
+
+async def _session_out(
+    db: AsyncSession,
+    session: ReviewSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    locale: Locale,
+) -> SessionOut:
+    data = session_public(session, locale)
+    if session.state["complete"]:
+        summary = await _owned_summary(db, student_id, school_id, session.id)
+        if summary is not None:
+            data["summary"] = summary_public(session, summary, locale)
+    return SessionOut(**data)
 
 
 async def list_lessons(db: AsyncSession, locale: Locale, chapter_id: str | None = None) -> list[LessonOut]:
@@ -201,7 +301,7 @@ async def create_or_resume_session(
     """Return the student's session for this lesson plus whether this call created it."""
     existing = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
     if existing:
-        return SessionOut(**session_public(existing, locale)), False
+        return await _session_out(db, existing, student_id, school_id, locale), False
 
     lesson = await db.get(ReviewLesson, lesson_id)
     if lesson is None:
@@ -220,8 +320,8 @@ async def create_or_resume_session(
         session = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
         if session is None:
             raise
-        return SessionOut(**session_public(session, locale)), False
-    return SessionOut(**session_public(session, locale)), True
+        return await _session_out(db, session, student_id, school_id, locale), False
+    return await _session_out(db, session, student_id, school_id, locale), True
 
 
 async def get_session_by_lesson(
@@ -230,7 +330,7 @@ async def get_session_by_lesson(
     session = await _owned_session(db, student_id, school_id, lesson_id=lesson_id)
     if session is None:
         raise ReviewError("session_not_found", 404)
-    return SessionOut(**session_public(session, locale))
+    return await _session_out(db, session, student_id, school_id, locale)
 
 
 async def get_session(
@@ -239,7 +339,7 @@ async def get_session(
     session = await _owned_session(db, student_id, school_id, session_id=session_id)
     if session is None:
         raise ReviewError("session_not_found", 404)
-    return SessionOut(**session_public(session, locale))
+    return await _session_out(db, session, student_id, school_id, locale)
 
 
 async def list_attempts(
@@ -334,6 +434,78 @@ async def _recalculate_mastery(
     )
 
 
+async def _complete_session(
+    db: AsyncSession,
+    session: ReviewSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+) -> None:
+    """Refresh D4 and create the one immutable D6 summary in the same transaction."""
+    if await _owned_summary(db, student_id, school_id, session.id) is not None:
+        return
+
+    attempts = (await db.execute(
+        select(ReviewAttempt).where(
+            ReviewAttempt.session_id == session.id,
+            ReviewAttempt.student_id == student_id,
+            ReviewAttempt.school_id == school_id,
+        ).order_by(ReviewAttempt.created_at, ReviewAttempt.id)
+    )).scalars().all()
+    if not attempts:
+        raise ReviewError("summary_evidence_required", 409)
+
+    concept_refs = list(dict.fromkeys(row.concept_ref for row in attempts))
+    subject_id = session.content["subject_id"]
+    for concept_ref in concept_refs:
+        await _recalculate_mastery(
+            db=db,
+            student_id=student_id,
+            school_id=school_id,
+            subject_id=subject_id,
+            concept_ref=concept_ref,
+        )
+
+    mastery_rows = (await db.execute(
+        select(MasteryRecord).where(
+            MasteryRecord.student_id == student_id,
+            MasteryRecord.school_id == school_id,
+            MasteryRecord.subject_id == subject_id,
+            MasteryRecord.concept_ref.in_(concept_refs),
+        )
+    )).scalars().all()
+    mastery_by_concept = {row.concept_ref: row for row in mastery_rows}
+
+    latest_evidence: dict[tuple[str, str], ReviewAttempt] = {}
+    for attempt in attempts:
+        latest_evidence[(attempt.concept_ref, attempt.question_id)] = attempt
+
+    concepts = []
+    for concept_ref in concept_refs:
+        mastery = mastery_by_concept.get(concept_ref)
+        if mastery is None:
+            raise ReviewError("mastery_record_unavailable", 409)
+        evidence = [
+            row for (ref, _), row in latest_evidence.items() if ref == concept_ref
+        ]
+        concepts.append({
+            "concept_ref": concept_ref,
+            "mastery_band": mastery.mastery_band,
+            "completed_with_support": any(row.assisted for row in evidence),
+            "dominant_error_type": mastery.dominant_error_type,
+        })
+
+    db.add(ReviewSessionSummary(
+        school_id=school_id,
+        student_id=student_id,
+        session_id=session.id,
+        lesson_id=session.lesson_id,
+        concepts=concepts,
+        total_attempts=len(attempts),
+        calculation_version=MASTERY_CALCULATION_VERSION,
+    ))
+    await db.flush()
+
+
 def _attempt_from_events(
     session: ReviewSession,
     message: ReviewMessage,
@@ -384,10 +556,11 @@ async def process_message(
     if session is None:
         raise ReviewError("session_not_found", 404)
     if str(message.request_id) in session.state["requests"]:
-        return SessionOut(**session_public(session, message.locale))
+        return await _session_out(db, session, student_id, school_id, message.locale)
     if session.version != message.expected_version:
         raise ReviewError("stale_session", 409)
 
+    was_complete = session.state["complete"]
     previous_event_count = len(session.state["events"])
     new_state = apply_message(session.content, session.state, message)
     attempt = _attempt_from_events(session, message, new_state, previous_event_count, student_id, school_id)
@@ -403,6 +576,8 @@ async def process_message(
             subject_id=session.content["subject_id"],
             concept_ref=attempt.concept_ref,
         )
+    if new_state["complete"] and not was_complete:
+        await _complete_session(db, session, student_id, school_id)
     await db.commit()
     await db.refresh(session)
-    return SessionOut(**session_public(session, message.locale))
+    return await _session_out(db, session, student_id, school_id, message.locale)
