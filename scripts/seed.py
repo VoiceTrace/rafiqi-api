@@ -87,7 +87,16 @@ async def seed():
             student_id=student.id,
             lesson_id=lesson.id,
             content=lesson.content,
-            state={"complete": True, "resolved": True, "events": []},
+            state={
+                "index": 0,
+                "attempts": 3,
+                "hint_level": 1,
+                "assistance": True,
+                "resolved": True,
+                "complete": True,
+                "events": [],
+                "requests": [],
+            },
             version=4,
         )
         db.add(review_session)
