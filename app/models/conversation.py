@@ -31,3 +31,8 @@ class Conversation(Base):
 
     student: Mapped["User"] = relationship(back_populates="conversations")
     traits: Mapped[list["ProfileTrait"]] = relationship(back_populates="source_conversation")
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
+    )
