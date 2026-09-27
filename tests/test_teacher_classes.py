@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -10,7 +11,7 @@ from sqlalchemy.pool import NullPool
 from app.api.deps import CurrentUser, get_db_session, require_teacher
 from app.core.database import Base
 from app.main import app
-from app.models import School, User
+from app.models import ReviewAttempt, ReviewLesson, ReviewSession, School, User
 from app.services.review_catalog import seed_catalog
 
 
@@ -30,6 +31,7 @@ async def class_api():
     teacher_id = uuid.uuid4()
     other_teacher_id = uuid.uuid4()
     student_id = uuid.uuid4()
+    second_student_id = uuid.uuid4()
     other_school_student_id = uuid.uuid4()
     async with factory() as db:
         db.add_all(
@@ -41,6 +43,7 @@ async def class_api():
                 User(id=teacher_id, school_id=school_id, email="teacher@class.test", full_name="Teacher", role="teacher", hashed_password="test"),
                 User(id=other_teacher_id, school_id=school_id, email="other.teacher@class.test", full_name="Other Teacher", role="teacher", hashed_password="test"),
                 User(id=student_id, school_id=school_id, email="student@class.test", full_name="Student", role="student", hashed_password="test"),
+                User(id=second_student_id, school_id=school_id, email="second.student@class.test", full_name="Second Student", role="student", hashed_password="test"),
                 User(id=other_school_student_id, school_id=other_school_id, email="student@other.test", full_name="Other Student", role="student", hashed_password="test"),
             ]
         )
@@ -65,7 +68,9 @@ async def class_api():
             "teacher": teacher_id,
             "other_teacher": other_teacher_id,
             "student": student_id,
+            "second_student": second_student_id,
             "other_student": other_school_student_id,
+            "factory": factory,
         }
     app.dependency_overrides.clear()
     await engine.dispose()
@@ -156,3 +161,110 @@ async def test_class_catalog_and_uniqueness_validation(class_api):
     assert (await client.post("/teacher/classes", json=body)).status_code == 409
     invalid = {**body, "name": "Unknown", "subject_id": "not-a-subject"}
     assert (await client.post("/teacher/classes", json=invalid)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_class_and_student_mastery_use_latest_filtered_evidence(class_api):
+    client, identity, ids = class_api
+    created = await client.post(
+        "/teacher/classes",
+        json={
+            "name": "Evidence class",
+            "grade_level": "Grade 10",
+            "subject_id": "physics",
+            "academic_year": "2026-2027",
+        },
+    )
+    class_id = created.json()["id"]
+    for student_id in (ids["student"], ids["second_student"]):
+        assert (
+            await client.post(
+                f"/teacher/classes/{class_id}/students",
+                json={"student_id": str(student_id)},
+            )
+        ).status_code == 201
+
+    factory = ids["factory"]
+    async with factory() as db:
+        lesson = await db.get(ReviewLesson, "newton-third-law")
+        session = ReviewSession(
+            id=uuid.uuid4(),
+            school_id=ids["school"],
+            student_id=ids["student"],
+            lesson_id=lesson.id,
+            content=lesson.content,
+            state={},
+            version=1,
+        )
+        db.add(session)
+        await db.flush()
+        when = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+        db.add_all(
+            [
+                ReviewAttempt(
+                    school_id=ids["school"], student_id=ids["student"], session_id=session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="force-pairs",
+                    concept_ref="action-reaction", response_text="wrong", option_id="smaller",
+                    correctness_score=0, error_type="force_pair_unequal_magnitude", hint_level=0,
+                    assisted=False, attempt_number=1, locale="en", created_at=when,
+                ),
+                ReviewAttempt(
+                    school_id=ids["school"], student_id=ids["student"], session_id=session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="force-pairs",
+                    concept_ref="action-reaction", response_text="equal", option_id="equal",
+                    correctness_score=1, error_type=None, hint_level=1,
+                    assisted=True, attempt_number=2, locale="en", created_at=when,
+                ),
+                ReviewAttempt(
+                    school_id=ids["school"], student_id=ids["student"], session_id=session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="different-objects",
+                    concept_ref="action-reaction", response_text="different objects", option_id=None,
+                    correctness_score=0.5, error_type="force_pair_incomplete_distinct_objects", hint_level=0,
+                    assisted=False, attempt_number=1, locale="en", created_at=when,
+                ),
+            ]
+        )
+        await db.commit()
+
+    report = await client.get(
+        f"/teacher/classes/{class_id}/mastery",
+        params={"lesson_id": "newton-third-law", "from": "2026-09-01", "to": "2026-09-30"},
+    )
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["enrolled_student_count"] == 2
+    assert body["students_with_evidence"] == 1
+    assert body["average_mastery"] == 0.75
+    assert body["band_counts"] == {
+        "needs_support": 0, "developing": 1, "secure": 0, "no_evidence": 1
+    }
+    student = next(item for item in body["students"] if item["student_id"] == str(ids["student"]))
+    assert student["evidence_count"] == 2
+    assert student["attempt_count"] == 3
+    assert student["assisted_evidence_count"] == 1
+    assert student["dominant_error_type"] in {
+        "force_pair_unequal_magnitude", "force_pair_incomplete_distinct_objects"
+    }
+    assert body["concepts"][0]["title"] == "Action and reaction"
+
+    detail = await client.get(
+        f"/teacher/students/{ids['student']}/mastery",
+        params={"class_id": class_id, "lesson_id": "newton-third-law", "locale": "ar"},
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["student"]["mastery_band"] == "developing"
+    assert detail.json()["concepts"][0]["title"] == "الفعل ورد الفعل"
+
+    invalid = await client.get(
+        f"/teacher/classes/{class_id}/mastery",
+        params={"from": "2026-10-01", "to": "2026-09-01"},
+    )
+    assert invalid.status_code == 422
+
+    identity["user"] = CurrentUser(ids["other_teacher"], ids["school"], "teacher")
+    assert (await client.get(f"/teacher/classes/{class_id}/mastery")).status_code == 404
+    assert (
+        await client.get(
+            f"/teacher/students/{ids['student']}/mastery", params={"class_id": class_id}
+        )
+    ).status_code == 404
