@@ -83,8 +83,8 @@ class HomeworkQuestion(Base):
     concept_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[str] = mapped_column(String(20), nullable=False, default=QuestionFormat.mcq)
-    # MCQ: [{"id": "a", "text": "..."}, ...] — 4 options
-    options: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
+    # MCQ: [{"id": "a", "text": "..."}, ...] — validated option list.
+    options: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
     # option id — NEVER sent to student
     correct_answer: Mapped[str] = mapped_column(String(10), nullable=False)
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

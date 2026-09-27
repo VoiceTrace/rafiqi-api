@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.errors import ErrorCode
+from app.models.user import User, UserRole
 from app.models.homework import (
     AssignmentStatus,
     HomeworkAssignment,
@@ -62,19 +64,19 @@ GAP_DIGEST_COVERAGE_THRESHOLD = 0.5  # 50 % of distributed students
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _not_found(msg: str = "Not found") -> HTTPException:
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": {"code": "not_found", "message": msg}})
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": {"code": ErrorCode.NOT_FOUND, "message": msg}})
 
 
 def _forbidden(msg: str = "Forbidden") -> HTTPException:
-    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"error": {"code": "forbidden", "message": msg}})
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"error": {"code": ErrorCode.FORBIDDEN, "message": msg}})
 
 
 def _conflict(msg: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": {"code": "conflict", "message": msg}})
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": {"code": ErrorCode.CONFLICT, "message": msg}})
 
 
 def _bad_request(msg: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": {"code": "bad_request", "message": msg}})
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": {"code": ErrorCode.VALIDATION_ERROR, "message": msg}})
 
 
 def _assignment_to_read(a: HomeworkAssignment, question_count: int | None = None) -> AssignmentRead:
@@ -226,6 +228,7 @@ async def update_assignment(
         select(HomeworkAssignment)
         .where(HomeworkAssignment.id == assignment_id, HomeworkAssignment.school_id == school_id)
         .options(selectinload(HomeworkAssignment.questions))
+        .with_for_update()
     )
     result = await db.execute(stmt)
     a = result.scalar_one_or_none()
@@ -233,13 +236,13 @@ async def update_assignment(
         raise _not_found("Assignment not found")
     if a.teacher_id != teacher_id:
         raise _forbidden()
-    if a.status == AssignmentStatus.distributed:
-        raise _conflict("Cannot edit a distributed assignment")
+    if a.status != AssignmentStatus.draft:
+        raise _conflict("Only draft assignments can be edited")
     if req.title is not None:
         a.title = req.title
-    if req.description is not None:
+    if "description" in req.model_fields_set:
         a.description = req.description
-    if req.due_at is not None:
+    if "due_at" in req.model_fields_set:
         a.due_at = req.due_at
     q_count = len(a.questions) if a.questions else 0
     await db.flush()
@@ -257,7 +260,7 @@ async def delete_assignment(
     stmt = select(HomeworkAssignment).where(
         HomeworkAssignment.id == assignment_id,
         HomeworkAssignment.school_id == school_id,
-    )
+    ).with_for_update()
     result = await db.execute(stmt)
     a = result.scalar_one_or_none()
     if a is None:
@@ -277,12 +280,16 @@ async def _load_assignment_for_teacher(
     teacher_id: uuid.UUID,
     school_id: uuid.UUID,
     assignment_id: uuid.UUID,
+    *,
+    lock: bool = False,
 ) -> HomeworkAssignment:
     stmt = (
         select(HomeworkAssignment)
         .where(HomeworkAssignment.id == assignment_id, HomeworkAssignment.school_id == school_id)
         .options(selectinload(HomeworkAssignment.questions))
     )
+    if lock:
+        stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     a = result.scalar_one_or_none()
     if a is None:
@@ -299,9 +306,9 @@ async def add_question(
     assignment_id: uuid.UUID,
     req: AddQuestionRequest,
 ) -> QuestionReadTeacher:
-    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
-    if a.status == AssignmentStatus.distributed:
-        raise _conflict("Cannot add questions to a distributed assignment")
+    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id, lock=True)
+    if a.status != AssignmentStatus.draft:
+        raise _conflict("Only draft assignments can have questions added")
     # validate correct_answer is one of the option ids
     option_ids = {o.id for o in req.options}
     if req.correct_answer not in option_ids:
@@ -331,9 +338,9 @@ async def update_question(
     question_id: uuid.UUID,
     req: UpdateQuestionRequest,
 ) -> QuestionReadTeacher:
-    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
-    if a.status == AssignmentStatus.distributed:
-        raise _conflict("Cannot edit questions on a distributed assignment")
+    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id, lock=True)
+    if a.status != AssignmentStatus.draft:
+        raise _conflict("Only draft assignment questions can be edited")
     stmt = select(HomeworkQuestion).where(
         HomeworkQuestion.id == question_id,
         HomeworkQuestion.assignment_id == assignment_id,
@@ -343,16 +350,18 @@ async def update_question(
     q = result.scalar_one_or_none()
     if q is None:
         raise _not_found("Question not found")
+    # Validate the merged question before mutation, including options-only patches.
+    options = [o.model_dump() for o in req.options] if req.options is not None else q.options
+    correct_answer = req.correct_answer if req.correct_answer is not None else q.correct_answer
+    if correct_answer not in {o["id"] for o in options}:
+        raise _bad_request("correct_answer must match one of the option ids")
     if req.question_text is not None:
         q.question_text = req.question_text
     if req.options is not None:
-        q.options = [o.model_dump() for o in req.options]
+        q.options = options
     if req.correct_answer is not None:
-        option_ids = {o["id"] for o in q.options}
-        if req.correct_answer not in option_ids:
-            raise _bad_request("correct_answer must match one of the option ids")
         q.correct_answer = req.correct_answer
-    if req.concept_ref is not None:
+    if "concept_ref" in req.model_fields_set:
         q.concept_ref = req.concept_ref
     if req.order is not None:
         q.order = req.order
@@ -368,9 +377,9 @@ async def delete_question(
     assignment_id: uuid.UUID,
     question_id: uuid.UUID,
 ) -> None:
-    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
-    if a.status == AssignmentStatus.distributed:
-        raise _conflict("Cannot delete questions from a distributed assignment")
+    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id, lock=True)
+    if a.status != AssignmentStatus.draft:
+        raise _conflict("Only draft assignment questions can be deleted")
     stmt = select(HomeworkQuestion).where(
         HomeworkQuestion.id == question_id,
         HomeworkQuestion.assignment_id == assignment_id,
@@ -393,11 +402,20 @@ async def distribute_assignment(
     assignment_id: uuid.UUID,
     req: DistributeRequest,
 ) -> AssignmentRead:
-    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
-    if a.status == AssignmentStatus.distributed:
-        raise _conflict("Assignment already distributed")
+    a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id, lock=True)
+    if a.status != AssignmentStatus.draft:
+        raise _conflict("Only draft assignments can be distributed")
     if not a.questions:
         raise _conflict("Cannot distribute an assignment with no questions")
+
+    recipients = await db.execute(select(User.id).where(
+        User.school_id == school_id,
+        User.role == UserRole.STUDENT,
+        User.is_active.is_(True),
+        User.id.in_(req.student_ids),
+    ))
+    if set(recipients.scalars().all()) != set(req.student_ids):
+        raise _bad_request("Recipients must be active students in your school")
 
     if req.due_at:
         a.due_at = req.due_at
@@ -583,6 +601,41 @@ async def get_student_assignment(
 
 # ── Student: submit (E5) ──────────────────────────────────────────────────────
 
+async def get_submission_result(
+    db: AsyncSession,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    student_assignment_id: uuid.UUID,
+) -> SubmissionResult:
+    """Restore feedback for the owner, only after a committed submission."""
+    result = await db.execute(
+        select(StudentAssignment)
+        .where(StudentAssignment.id == student_assignment_id,
+               StudentAssignment.school_id == school_id)
+        .options(selectinload(StudentAssignment.attempts).selectinload(HomeworkAttempt.question))
+    )
+    sa = result.scalar_one_or_none()
+    if sa is None:
+        raise _not_found("Assignment not found")
+    if sa.student_id != student_id:
+        raise _forbidden()
+    if sa.status != StudentAssignmentStatus.submitted:
+        raise _conflict("Results are available after submission")
+    attempts = sorted(sa.attempts, key=lambda attempt: (attempt.question.order, str(attempt.question_id)))
+    return SubmissionResult(
+        student_assignment_id=sa.id,
+        score=sa.score,
+        correct_count=sum(attempt.is_correct for attempt in attempts),
+        total_count=len(attempts),
+        results=[AttemptResult(
+            question_id=attempt.question_id,
+            selected_option=attempt.student_answer,
+            is_correct=attempt.is_correct,
+            correctness_score=attempt.correctness_score,
+            correct_answer=attempt.question.correct_answer,
+        ) for attempt in attempts],
+    )
+
 async def submit_homework(
     db: AsyncSession,
     student_id: uuid.UUID,
@@ -599,6 +652,7 @@ async def submit_homework(
         .options(
             selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions)
         )
+        .with_for_update()
     )
     result = await db.execute(stmt)
     sa = result.scalar_one_or_none()
@@ -608,12 +662,17 @@ async def submit_homework(
         raise _forbidden()
     if sa.status == StudentAssignmentStatus.submitted:
         raise _conflict("Already submitted")
+    if sa.assignment.status != AssignmentStatus.distributed:
+        raise _conflict("Assignment is not open for submission")
 
     questions = {q.id: q for q in sa.assignment.questions}
     answer_map = {a.question_id: a.selected_option for a in answers}
 
-    if set(answer_map.keys()) != set(questions.keys()):
+    if not questions or len(answers) != len(answer_map) or set(answer_map.keys()) != set(questions.keys()):
         raise _bad_request("Answers must cover exactly the assignment's questions")
+    for q_id, selected in answer_map.items():
+        if selected not in {option["id"] for option in questions[q_id].options}:
+            raise _bad_request("Selected answer must match one of the question's option ids")
 
     results: list[AttemptResult] = []
     correct_count = 0
@@ -686,7 +745,7 @@ async def _update_mastery_from_homework(
             MasteryRecord.student_id == student_id,
             MasteryRecord.lesson_id == assignment.lesson_id,
             MasteryRecord.concept_ref == concept_ref,
-        )
+        ).with_for_update()
         result = await db.execute(stmt)
         mr = result.scalar_one_or_none()
         if mr is None:
@@ -699,6 +758,7 @@ async def _update_mastery_from_homework(
                 confidence=_mastery_confidence(avg),
                 attempt_count=len(scores),
                 correct_count=sum(1 for s in scores if s >= CORRECT_THRESHOLD),
+                last_attempt_at=datetime.now(tz=timezone.utc),
             )
             db.add(mr)
         else:
@@ -709,3 +769,4 @@ async def _update_mastery_from_homework(
             mr.confidence = _mastery_confidence(blended)
             mr.attempt_count = total
             mr.correct_count = (mr.correct_count or 0) + sum(1 for s in scores if s >= CORRECT_THRESHOLD)
+            mr.last_attempt_at = datetime.now(tz=timezone.utc)

@@ -404,6 +404,9 @@ class TestDistributeAssignment:
         db = self._make_db(a)
 
         students = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+        recipients = MagicMock()
+        recipients.scalars.return_value.all.return_value = students
+        db.execute.side_effect = [db.execute.return_value, recipients]
         req = DistributeRequest(student_ids=students)
         result = await distribute_assignment(db=db, teacher_id=a.teacher_id, school_id=a.school_id, assignment_id=a.id, req=req)
 

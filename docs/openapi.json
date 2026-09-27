@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Rafiqi API",
-    "description": "\n## Rafiqi API\n\nBackend for **Rafiqi** \u2014 an AI-powered education platform for teachers and students,\nbuilt for the Saudi Arabian (KSA) market.\n\n### Authentication\n\nAll protected endpoints require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer <access_token>\n```\n\nObtain a token by calling **POST /auth/login**. Tokens expire after **6 hours**.\n\n### Multi-tenancy\n\nEvery response is automatically scoped to the requesting user's school.\nA user from School A will never see data from School B \u2014 this is enforced\nserver-side and cannot be bypassed by the client.\n\n### Roles\n\n| Role | Description |\n|---|---|\n| `teacher` | Can view class rosters, generate lesson plans, run live sessions |\n| `student` | Can chat with Rafiqi, view their own profile, join live sessions |\n\nRoutes are role-protected \u2014 sending a teacher token to a student-only route\nreturns `403 Forbidden`.\n\n### Error shape\n\nAll errors follow a consistent shape:\n\n```json\n{\n  \"detail\": {\n    \"error\": {\n      \"code\": \"unauthorized\",\n      \"message\": \"Invalid or expired token\"\n    }\n  }\n}\n```\n\nKnown error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `internal_error`.\n",
+    "description": "\n## Rafiqi API\n\nBackend for **Rafiqi** \u2014 an AI-powered education platform for teachers and students,\nbuilt for the Saudi Arabian (KSA) market.\n\n### Authentication\n\nAll protected endpoints require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer <access_token>\n```\n\nObtain a token pair by calling **POST /auth/login**. Access tokens are short-lived \u2014\nexchange the accompanying `refresh_token` for a new pair via **POST /auth/refresh**\nrather than logging in again. Call **POST /auth/logout** to revoke a refresh token.\n\n### Multi-tenancy\n\nEvery response is automatically scoped to the requesting user's school.\nA user from School A will never see data from School B \u2014 this is enforced\nserver-side and cannot be bypassed by the client.\n\n### Roles\n\n| Role | Description |\n|---|---|\n| `teacher` | Can view class rosters, generate lesson plans, run live sessions |\n| `student` | Can chat with Rafiqi, view their own profile, join live sessions |\n\nRoutes are role-protected \u2014 sending a teacher token to a student-only route\nreturns `403 Forbidden`.\n\n### Error shape\n\nAll errors follow a consistent shape:\n\n```json\n{\n  \"detail\": {\n    \"error\": {\n      \"code\": \"unauthorized\",\n      \"message\": \"Invalid or expired token\"\n    }\n  }\n}\n```\n\nKnown error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `internal_error`.\n",
     "contact": {
       "name": "EntraI Engineering",
       "email": "eng@entrai.com"
@@ -19,7 +19,7 @@
           "auth"
         ],
         "summary": "Login",
-        "description": "Authenticate with email and password. Returns a signed JWT.\n\nThe token payload contains:\n- **sub** \u2014 user ID\n- **school_id** \u2014 the user's school (all data is scoped to this)\n- **role** \u2014 `teacher` or `student`\n- **exp** \u2014 expiry (6 hours from issue)\n\nPass the token in every subsequent request:\n```\nAuthorization: Bearer <access_token>\n```",
+        "description": "Authenticate with email and password. Returns a signed access token plus a\nrefresh token.\n\nThe access token payload contains:\n- **sub** \u2014 user ID\n- **school_id** \u2014 the user's school (all data is scoped to this)\n- **role** \u2014 `teacher` or `student`\n- **exp** \u2014 expiry (`ACCESS_TOKEN_EXPIRE_MINUTES` from issue)\n\nPass the access token in every subsequent request:\n```\nAuthorization: Bearer <access_token>\n```\n\nWhen it expires, use `POST /auth/refresh` with the `refresh_token` to get a\nnew pair without asking the user to log in again.",
         "operationId": "login_route_auth_login_post",
         "requestBody": {
           "content": {
@@ -33,7 +33,7 @@
         },
         "responses": {
           "200": {
-            "description": "Successful login \u2014 returns a signed JWT valid for 6 hours.",
+            "description": "Successful login \u2014 returns a signed access token and a refresh token.",
             "content": {
               "application/json": {
                 "schema": {
@@ -56,6 +56,86 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh access token",
+        "description": "Exchange a refresh token for a new access/refresh token pair.\n\nRefresh tokens rotate on every use: the one you send is revoked and a new\none is returned in its place. Reusing an already-exchanged (or logged-out)\nrefresh token fails with 401.",
+        "operationId": "refresh_route_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refresh token is invalid, expired, already used, or the account is inactive."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "Revoke a refresh token so it can no longer be exchanged for a new access token.\n\nThis does not invalidate an already-issued access token \u2014 it stays valid\nuntil it naturally expires (up to `ACCESS_TOKEN_EXPIRE_MINUTES`), which is\nwhy access tokens are kept short-lived. Always returns 204, whether or not\nthe token was found, so the response never reveals whether it existed.",
+        "operationId": "logout_route_auth_logout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Refresh token revoked. Same response whether or not it was found."
           },
           "422": {
             "description": "Validation Error",
@@ -634,6 +714,1254 @@
         }
       }
     },
+    "/study-sessions": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Start a new study session",
+        "operationId": "create_session_study_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/study-sessions/me/mastery": {
+      "get": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Get my mastery records (optionally filtered by lesson_id)",
+        "operationId": "get_my_mastery_study_sessions_me_mastery_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lesson_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lesson Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MasteryRecordRead"
+                  },
+                  "title": "Response Get My Mastery Study Sessions Me Mastery Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Get session with all its questions",
+        "operationId": "get_session_study_sessions__session_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionWithQuestions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/plan": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Plan session \u2014 Rafiqi sets concept order, transitions setup\u2192review",
+        "operationId": "plan_session_study_sessions__session_id__plan_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/advance": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Advance to the next stage (review\u2192check_in\u2192deepen\u2192wrap_up)",
+        "operationId": "advance_stage_study_sessions__session_id__advance_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceStageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/questions": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Generate next question for the current concept (check_in or deepen only)",
+        "operationId": "get_next_question_study_sessions__session_id__questions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__schemas__study_session__QuestionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/questions/{question_id}/attempts": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Submit an answer \u2014 returns feedback + hint if score < 0.8 and retries remain",
+        "operationId": "submit_attempt_study_sessions__session_id__questions__question_id__attempts_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitAttemptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__schemas__study_session__AttemptResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/concepts/next": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Move to the next concept within the current stage",
+        "operationId": "advance_concept_study_sessions__session_id__concepts_next_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/explain": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Ask Rafiqi to explain a concept (available in any active stage)",
+        "operationId": "explain_concept_study_sessions__session_id__explain_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplanationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/study-sessions/{session_id}/close": {
+      "post": {
+        "tags": [
+          "study-sessions"
+        ],
+        "summary": "Close session \u2014 computes MasteryRecords for all concepts, generates summary card",
+        "operationId": "close_session_study_sessions__session_id__close_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Create a new homework assignment (draft)",
+        "operationId": "create_assignment_homework_assignments_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAssignmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "List my assignments (optionally filtered by lesson_id)",
+        "operationId": "list_assignments_homework_assignments_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lesson_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lesson Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AssignmentRead"
+                  },
+                  "title": "Response List Assignments Homework Assignments Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get assignment with all questions (teacher view, includes correct answers)",
+        "operationId": "get_assignment_homework_assignments__assignment_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentWithQuestions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Update assignment title / description / due_at (draft only)",
+        "operationId": "update_assignment_homework_assignments__assignment_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAssignmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Delete an assignment (draft only)",
+        "operationId": "delete_assignment_homework_assignments__assignment_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}/questions": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Add an MCQ question to a draft assignment",
+        "operationId": "add_question_homework_assignments__assignment_id__questions_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddQuestionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionReadTeacher"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}/questions/{question_id}": {
+      "patch": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Update a question (draft assignment only)",
+        "operationId": "update_question_homework_assignments__assignment_id__questions__question_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateQuestionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionReadTeacher"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Delete a question (draft assignment only)",
+        "operationId": "delete_question_homework_assignments__assignment_id__questions__question_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}/distribute": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Bulk-distribute assignment to student list (transitions draft \u2192 distributed)",
+        "operationId": "distribute_assignment_homework_assignments__assignment_id__distribute_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DistributeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}/gap-digest": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Class-level mastery gap digest for this assignment's lesson (E2)",
+        "operationId": "get_gap_digest_homework_assignments__assignment_id__gap_digest_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapDigestRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/me/assignments": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "List my assigned homework",
+        "operationId": "list_my_assignments_homework_me_assignments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StudentAssignmentRead"
+                  },
+                  "type": "array",
+                  "title": "Response List My Assignments Homework Me Assignments Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/homework/me/assignments/{student_assignment_id}": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get assignment with questions \u2014 no correct answers revealed until after submit",
+        "operationId": "get_my_assignment_homework_me_assignments__student_assignment_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Student Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentAssignmentWithQuestions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/me/assignments/{student_assignment_id}/results": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Read my saved feedback after submission",
+        "operationId": "get_my_results_homework_me_assignments__student_assignment_id__results_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Student Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/me/assignments/{student_assignment_id}/submit": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Submit homework \u2014 reveals correct answers in response (E5)",
+        "operationId": "submit_homework_homework_me_assignments__student_assignment_id__submit_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Student Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitHomeworkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -657,6 +1985,317 @@
   },
   "components": {
     "schemas": {
+      "AddQuestionRequest": {
+        "properties": {
+          "question_text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Question Text"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/MCQOption"
+            },
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Options"
+          },
+          "correct_answer": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 1,
+            "title": "Correct Answer"
+          },
+          "concept_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Ref"
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_text",
+          "options",
+          "correct_answer"
+        ],
+        "title": "AddQuestionRequest"
+      },
+      "AdvanceStageRequest": {
+        "properties": {
+          "to_stage": {
+            "type": "string",
+            "pattern": "^(review|check_in|deepen|wrap_up)$",
+            "title": "To Stage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "to_stage"
+        ],
+        "title": "AdvanceStageRequest"
+      },
+      "AnswerInput": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "selected_option": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 1,
+            "title": "Selected Option"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "selected_option"
+        ],
+        "title": "AnswerInput"
+      },
+      "AssignmentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "school_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "School Id"
+          },
+          "teacher_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Teacher Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "school_id",
+          "teacher_id",
+          "lesson_id",
+          "title",
+          "description",
+          "status",
+          "due_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AssignmentRead"
+      },
+      "AssignmentWithQuestions": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "school_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "School Id"
+          },
+          "teacher_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Teacher Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count",
+            "default": 0
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionReadTeacher"
+            },
+            "type": "array",
+            "title": "Questions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "school_id",
+          "teacher_id",
+          "lesson_id",
+          "title",
+          "description",
+          "status",
+          "due_at",
+          "created_at",
+          "updated_at",
+          "questions"
+        ],
+        "title": "AssignmentWithQuestions"
+      },
+      "AttemptRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "correctness_score": {
+            "type": "number",
+            "title": "Correctness Score"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "hint_level": {
+            "type": "integer",
+            "title": "Hint Level"
+          },
+          "attempt_number": {
+            "type": "integer",
+            "title": "Attempt Number"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "question_id",
+          "correctness_score",
+          "error_type",
+          "hint_level",
+          "attempt_number",
+          "created_at"
+        ],
+        "title": "AttemptRead"
+      },
       "Body_upload_own_avatar_users_me_avatar_put": {
         "properties": {
           "file": {
@@ -684,6 +2323,217 @@
           "file"
         ],
         "title": "Body_upload_user_avatar_users__user_id__avatar_put"
+      },
+      "ConceptGap": {
+        "properties": {
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "avg_mastery": {
+            "type": "number",
+            "title": "Avg Mastery"
+          },
+          "student_count": {
+            "type": "integer",
+            "title": "Student Count"
+          },
+          "confidence": {
+            "type": "string",
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_ref",
+          "avg_mastery",
+          "student_count",
+          "confidence"
+        ],
+        "title": "ConceptGap"
+      },
+      "CreateAssignmentRequest": {
+        "properties": {
+          "lesson_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lesson Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_id",
+          "title"
+        ],
+        "title": "CreateAssignmentRequest"
+      },
+      "CreateSessionRequest": {
+        "properties": {
+          "lesson_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lesson Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_id"
+        ],
+        "title": "CreateSessionRequest"
+      },
+      "DistributeRequest": {
+        "properties": {
+          "student_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Student Ids"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_ids"
+        ],
+        "title": "DistributeRequest"
+      },
+      "ExplainRequest": {
+        "properties": {
+          "concept_ref": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Concept Ref"
+          },
+          "student_question": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Question"
+          },
+          "lesson_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_ref"
+        ],
+        "title": "ExplainRequest"
+      },
+      "ExplanationRead": {
+        "properties": {
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "explanation_text": {
+            "type": "string",
+            "title": "Explanation Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "concept_ref",
+          "explanation_text"
+        ],
+        "title": "ExplanationRead"
+      },
+      "GapDigestRead": {
+        "properties": {
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "student_coverage": {
+            "type": "integer",
+            "title": "Student Coverage"
+          },
+          "total_students": {
+            "type": "integer",
+            "title": "Total Students"
+          },
+          "coverage_sufficient": {
+            "type": "boolean",
+            "title": "Coverage Sufficient"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/ConceptGap"
+            },
+            "type": "array",
+            "title": "Gaps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_id",
+          "student_coverage",
+          "total_students",
+          "coverage_sufficient",
+          "gaps"
+        ],
+        "title": "GapDigestRead"
       },
       "HTTPValidationError": {
         "properties": {
@@ -740,6 +2590,686 @@
           }
         ]
       },
+      "LogoutRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "examples": [
+              "k3s9F1x...long-random-string"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "LogoutRequest"
+      },
+      "MCQOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "MCQOption"
+      },
+      "MasteryRecordRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "title": "Attempt Count"
+          },
+          "correct_count": {
+            "type": "integer",
+            "title": "Correct Count"
+          },
+          "mastery_level": {
+            "type": "number",
+            "title": "Mastery Level"
+          },
+          "dominant_error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dominant Error Type"
+          },
+          "confidence": {
+            "type": "string",
+            "title": "Confidence"
+          },
+          "last_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "lesson_id",
+          "concept_ref",
+          "attempt_count",
+          "correct_count",
+          "mastery_level",
+          "dominant_error_type",
+          "confidence",
+          "last_attempt_at",
+          "updated_at"
+        ],
+        "title": "MasteryRecordRead"
+      },
+      "PlanSessionRequest": {
+        "properties": {
+          "lesson_content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Lesson Content"
+          },
+          "student_profile": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_content"
+        ],
+        "title": "PlanSessionRequest",
+        "description": "lesson_content stub until B1 ships a proper lesson model.\nExpected keys: \"objectives\" (list[str]), \"concepts\" (list[str]), \"materials\" (str?)."
+      },
+      "QuestionReadTeacher": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Assignment Id"
+          },
+          "question_text": {
+            "type": "string",
+            "title": "Question Text"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/MCQOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "concept_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Ref"
+          },
+          "order": {
+            "type": "integer",
+            "title": "Order"
+          },
+          "correct_answer": {
+            "type": "string",
+            "title": "Correct Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "assignment_id",
+          "question_text",
+          "format",
+          "options",
+          "concept_ref",
+          "order",
+          "correct_answer"
+        ],
+        "title": "QuestionReadTeacher",
+        "description": "Teacher-only view: includes correct_answer."
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "examples": [
+              "k3s9F1x...long-random-string"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest"
+      },
+      "SessionRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "school_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "School Id"
+          },
+          "student_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "current_stage": {
+            "type": "string",
+            "title": "Current Stage"
+          },
+          "current_concept_index": {
+            "type": "integer",
+            "title": "Current Concept Index"
+          },
+          "concepts_order": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concepts Order"
+          },
+          "summary_card": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Card"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "school_id",
+          "student_id",
+          "lesson_id",
+          "status",
+          "current_stage",
+          "current_concept_index",
+          "concepts_order",
+          "summary_card",
+          "started_at",
+          "closed_at",
+          "updated_at"
+        ],
+        "title": "SessionRead"
+      },
+      "SessionWithQuestions": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "school_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "School Id"
+          },
+          "student_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "current_stage": {
+            "type": "string",
+            "title": "Current Stage"
+          },
+          "current_concept_index": {
+            "type": "integer",
+            "title": "Current Concept Index"
+          },
+          "concepts_order": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concepts Order"
+          },
+          "summary_card": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Card"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__study_session__QuestionRead"
+            },
+            "type": "array",
+            "title": "Questions",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "school_id",
+          "student_id",
+          "lesson_id",
+          "status",
+          "current_stage",
+          "current_concept_index",
+          "concepts_order",
+          "summary_card",
+          "started_at",
+          "closed_at",
+          "updated_at"
+        ],
+        "title": "SessionWithQuestions"
+      },
+      "StudentAssignmentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Assignment Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "assignment_id",
+          "lesson_id",
+          "title",
+          "description",
+          "status",
+          "score",
+          "due_at",
+          "submitted_at"
+        ],
+        "title": "StudentAssignmentRead"
+      },
+      "StudentAssignmentWithQuestions": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Assignment Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count",
+            "default": 0
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__homework__QuestionRead"
+            },
+            "type": "array",
+            "title": "Questions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "assignment_id",
+          "lesson_id",
+          "title",
+          "description",
+          "status",
+          "score",
+          "due_at",
+          "submitted_at",
+          "questions"
+        ],
+        "title": "StudentAssignmentWithQuestions",
+        "description": "Student view: questions WITHOUT correct_answer."
+      },
+      "SubmissionResult": {
+        "properties": {
+          "student_assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Assignment Id"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "correct_count": {
+            "type": "integer",
+            "title": "Correct Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/app__schemas__homework__AttemptResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_assignment_id",
+          "score",
+          "correct_count",
+          "total_count",
+          "results"
+        ],
+        "title": "SubmissionResult"
+      },
+      "SubmitAttemptRequest": {
+        "properties": {
+          "student_response": {
+            "type": "string",
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Student Response"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_response"
+        ],
+        "title": "SubmitAttemptRequest"
+      },
+      "SubmitHomeworkRequest": {
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerInput"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Answers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answers"
+        ],
+        "title": "SubmitHomeworkRequest"
+      },
       "TokenResponse": {
         "properties": {
           "access_token": {
@@ -748,6 +3278,14 @@
             "description": "Signed JWT. Include in every protected request as: `Authorization: Bearer <access_token>`",
             "examples": [
               "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            ]
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "description": "Opaque token used to obtain a new access token via `POST /auth/refresh`. Store it securely \u2014 it is not a JWT and cannot be decoded.",
+            "examples": [
+              "k3s9F1x...long-random-string"
             ]
           },
           "token_type": {
@@ -761,15 +3299,130 @@
         },
         "type": "object",
         "required": [
-          "access_token"
+          "access_token",
+          "refresh_token"
         ],
         "title": "TokenResponse",
         "examples": [
           {
             "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZjU3ZDBmMiIsInNjaG9vbF9pZCI6ImY5OGIzYTQ5Iiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3ODkzMzg1MDB9.signature",
+            "refresh_token": "k3s9F1x...long-random-string",
             "token_type": "bearer"
           }
         ]
+      },
+      "UpdateAssignmentRequest": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          }
+        },
+        "type": "object",
+        "title": "UpdateAssignmentRequest"
+      },
+      "UpdateQuestionRequest": {
+        "properties": {
+          "question_text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Text"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MCQOption"
+                },
+                "type": "array",
+                "maxItems": 6,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "correct_answer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Answer"
+          },
+          "concept_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Ref"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          }
+        },
+        "type": "object",
+        "title": "UpdateQuestionRequest"
       },
       "UserCreate": {
         "properties": {
@@ -996,6 +3649,187 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "app__schemas__homework__AttemptResult": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "selected_option": {
+            "type": "string",
+            "title": "Selected Option"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "correctness_score": {
+            "type": "number",
+            "title": "Correctness Score"
+          },
+          "correct_answer": {
+            "type": "string",
+            "title": "Correct Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "selected_option",
+          "is_correct",
+          "correctness_score",
+          "correct_answer"
+        ],
+        "title": "AttemptResult"
+      },
+      "app__schemas__homework__QuestionRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Assignment Id"
+          },
+          "question_text": {
+            "type": "string",
+            "title": "Question Text"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/MCQOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "concept_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Ref"
+          },
+          "order": {
+            "type": "integer",
+            "title": "Order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "assignment_id",
+          "question_text",
+          "format",
+          "options",
+          "concept_ref",
+          "order"
+        ],
+        "title": "QuestionRead"
+      },
+      "app__schemas__study_session__AttemptResult": {
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/AttemptRead"
+          },
+          "feedback": {
+            "type": "string",
+            "title": "Feedback"
+          },
+          "hint_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint Text"
+          },
+          "hint_level": {
+            "type": "integer",
+            "title": "Hint Level"
+          },
+          "concept_confirmed": {
+            "type": "boolean",
+            "title": "Concept Confirmed"
+          },
+          "max_attempts_reached": {
+            "type": "boolean",
+            "title": "Max Attempts Reached"
+          },
+          "session_stage": {
+            "type": "string",
+            "title": "Session Stage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt",
+          "feedback",
+          "hint_text",
+          "hint_level",
+          "concept_confirmed",
+          "max_attempts_reached",
+          "session_stage"
+        ],
+        "title": "AttemptResult",
+        "description": "Full response returned when a student submits an attempt."
+      },
+      "app__schemas__study_session__QuestionRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "concept_ref": {
+            "type": "string",
+            "title": "Concept Ref"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "question_text": {
+            "type": "string",
+            "title": "Question Text"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "concept_ref",
+          "stage",
+          "question_text",
+          "created_at"
+        ],
+        "title": "QuestionRead",
+        "description": "internal_answer_key is intentionally excluded \u2014 never sent to the student."
       }
     },
     "securitySchemes": {
@@ -1025,6 +3859,14 @@
     {
       "name": "lessons",
       "description": "Lesson prep \u2014 objectives, flow, check-questions (B1/B2/B3)."
+    },
+    {
+      "name": "study-sessions",
+      "description": "Epic D \u2014 Student study sessions with Rafiqi. State machine: setup \u2192 review \u2192 check_in \u2192 deepen \u2192 wrap_up \u2192 closed. Generates questions, captures attempts, scores with hint ladder, computes mastery records on close."
+    },
+    {
+      "name": "homework",
+      "description": "Epic E \u2014 Homework assignments. Teachers create MCQ assignments, add questions, and bulk-distribute to students. Students retrieve their assignments (no correct answers until submitted) and submit answers. Submission reveals correct answers and writes mastery records. Gap-digest endpoint aggregates class-level concept weaknesses for the teacher."
     },
     {
       "name": "sessions",

@@ -270,6 +270,21 @@ async def get_my_assignment(
 
 # ── Student: submit ───────────────────────────────────────────────────────────
 
+@router.get(
+    "/me/assignments/{student_assignment_id}/results",
+    response_model=SubmissionResult,
+    summary="Read my saved feedback after submission",
+)
+async def get_my_results(
+    student_assignment_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_student)],
+    db: AsyncSession = Depends(get_db_session),
+) -> SubmissionResult:
+    return await svc.get_submission_result(
+        db=db, student_id=current_user.id, school_id=current_user.school_id,
+        student_assignment_id=student_assignment_id,
+    )
+
 @router.post(
     "/me/assignments/{student_assignment_id}/submit",
     response_model=SubmissionResult,

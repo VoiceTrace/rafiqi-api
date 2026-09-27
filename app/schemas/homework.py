@@ -3,32 +3,50 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+
+
+class HomeworkInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 # ── Options ────────────────────────────────────────────────────────────────────
 
-class MCQOption(BaseModel):
+class MCQOption(HomeworkInput):
     id: str = Field(..., min_length=1, max_length=10)
     text: str = Field(..., min_length=1)
 
 
 # ── Question ──────────────────────────────────────────────────────────────────
 
-class AddQuestionRequest(BaseModel):
+class AddQuestionRequest(HomeworkInput):
     question_text: str = Field(..., min_length=1)
     options: list[MCQOption] = Field(..., min_length=2, max_length=6)
     correct_answer: str = Field(..., min_length=1, max_length=10)
-    concept_ref: str | None = None
-    order: int = 0
+    concept_ref: str | None = Field(default=None, max_length=200)
+    order: int = Field(default=0, ge=0)
+
+    @field_validator("options")
+    @classmethod
+    def unique_option_ids(cls, options: list[MCQOption]) -> list[MCQOption]:
+        if len({option.id for option in options}) != len(options):
+            raise ValueError("Option ids must be unique")
+        return options
 
 
-class UpdateQuestionRequest(BaseModel):
-    question_text: str | None = None
-    options: list[MCQOption] | None = None
-    correct_answer: str | None = None
-    concept_ref: str | None = None
-    order: int | None = None
+class UpdateQuestionRequest(HomeworkInput):
+    question_text: str | None = Field(default=None, min_length=1)
+    options: list[MCQOption] | None = Field(default=None, min_length=2, max_length=6)
+    correct_answer: str | None = Field(default=None, min_length=1, max_length=10)
+    concept_ref: str | None = Field(default=None, max_length=200)
+    order: int | None = Field(default=None, ge=0)
+
+    @field_validator("options")
+    @classmethod
+    def unique_option_ids(cls, options: list[MCQOption] | None) -> list[MCQOption] | None:
+        if options is not None:
+            return AddQuestionRequest.unique_option_ids(options)
+        return options
 
 
 class QuestionRead(BaseModel):
@@ -49,22 +67,29 @@ class QuestionReadTeacher(QuestionRead):
 
 # ── Assignment ────────────────────────────────────────────────────────────────
 
-class CreateAssignmentRequest(BaseModel):
-    lesson_id: str = Field(..., min_length=1)
+class CreateAssignmentRequest(HomeworkInput):
+    lesson_id: str = Field(..., min_length=1, max_length=100)
     title: str = Field(..., min_length=1, max_length=500)
     description: str | None = None
-    due_at: datetime | None = None
+    due_at: AwareDatetime | None = None
 
 
-class UpdateAssignmentRequest(BaseModel):
-    title: str | None = None
+class UpdateAssignmentRequest(HomeworkInput):
+    title: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = None
-    due_at: datetime | None = None
+    due_at: AwareDatetime | None = None
 
 
 class DistributeRequest(BaseModel):
     student_ids: list[uuid.UUID] = Field(..., min_length=1)
-    due_at: datetime | None = None
+    due_at: AwareDatetime | None = None
+
+    @field_validator("student_ids")
+    @classmethod
+    def unique_students(cls, ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(ids)) != len(ids):
+            raise ValueError("Student ids must be unique")
+        return ids
 
 
 class AssignmentRead(BaseModel):
@@ -114,6 +139,13 @@ class AnswerInput(BaseModel):
 
 class SubmitHomeworkRequest(BaseModel):
     answers: list[AnswerInput] = Field(..., min_length=1)
+
+    @field_validator("answers")
+    @classmethod
+    def unique_questions(cls, answers: list[AnswerInput]) -> list[AnswerInput]:
+        if len({answer.question_id for answer in answers}) != len(answers):
+            raise ValueError("Each question must be answered exactly once")
+        return answers
 
 
 class AttemptResult(BaseModel):
