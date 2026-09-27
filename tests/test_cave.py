@@ -180,12 +180,17 @@ async def test_get_owned_conversation_wrong_school_raises_404():
 async def test_end_conversation_sets_ended_at_and_runs_extraction():
     convo = _fake_conversation()
     mock_db = AsyncMock()
+    sentinel_traits = [MagicMock()]
 
-    with patch("app.services.cave.profile_extraction.extract_and_merge", new=AsyncMock()) as mock_extract:
-        await cave_svc.end_conversation(convo, mock_db)
+    with patch(
+        "app.services.cave.profile_extraction.extract_and_merge",
+        new=AsyncMock(return_value=sentinel_traits),
+    ) as mock_extract:
+        result = await cave_svc.end_conversation(convo, mock_db)
 
     assert convo.ended_at is not None
     mock_extract.assert_awaited_once_with(convo, mock_db)
+    assert result is sentinel_traits
 
 
 @pytest.mark.asyncio
@@ -249,7 +254,7 @@ async def test_extract_and_merge_creates_new_trait_when_none_exists():
         "app.services.profile_extraction.chat_completion",
         new=AsyncMock(return_value=_extraction_response(0.9)),
     ):
-        await profile_extraction.extract_and_merge(convo, mock_db)
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
 
     added_trait = next(
         call.args[0] for call in mock_db.add.call_args_list if isinstance(call.args[0], ProfileTrait)
@@ -259,6 +264,9 @@ async def test_extract_and_merge_creates_new_trait_when_none_exists():
     assert added_trait.confidence == ConfidenceLabel.CONFIDENT
     assert added_trait.source_conversation_id == convo.id
     mock_db.commit.assert_awaited()
+    # Returned so the caller (end_conversation route) can show "what Rafiqi learned"
+    assert result == [added_trait]
+    mock_db.refresh.assert_awaited_once_with(added_trait)
 
 
 @pytest.mark.asyncio
@@ -297,7 +305,7 @@ async def test_extract_and_merge_clamps_score_movement_for_existing_trait():
         "app.services.profile_extraction.chat_completion",
         new=AsyncMock(return_value=_extraction_response(0.9)),
     ):
-        await profile_extraction.extract_and_merge(convo, mock_db)
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
 
     # A3 promotion rule (v2): model proposes 0.9, but a single session can only move an
     # existing score by up to 0.3 -> 0.5 + 0.3 = 0.8, not straight to the model's 0.9.
@@ -305,6 +313,7 @@ async def test_extract_and_merge_clamps_score_movement_for_existing_trait():
     assert existing_trait.confidence == ConfidenceLabel.CONFIDENT  # 0.8 crosses the 0.7 threshold
     assert existing_trait.source_conversation_id == convo.id
     mock_db.commit.assert_awaited()
+    assert result == [existing_trait]
 
 
 @pytest.mark.asyncio
@@ -343,10 +352,11 @@ async def test_extract_and_merge_clamps_downward_movement_too():
         "app.services.profile_extraction.chat_completion",
         new=AsyncMock(return_value=_extraction_response(0.1)),
     ):
-        await profile_extraction.extract_and_merge(convo, mock_db)
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
 
     # Model proposes 0.1, clamp limits the drop to -0.3 -> 0.9 - 0.3 = 0.6, not straight to 0.1.
     assert existing_trait.score == pytest.approx(0.6)
+    assert result == [existing_trait]
 
 
 @pytest.mark.asyncio
@@ -365,11 +375,76 @@ async def test_extract_and_merge_excludes_flagged_messages_from_transcript():
     mock_db.execute.side_effect = [messages_result]
 
     with patch("app.services.profile_extraction.chat_completion", new=AsyncMock()) as mock_chat:
-        await profile_extraction.extract_and_merge(convo, mock_db)
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
 
     # Transcript was empty once the flagged turn was excluded -> no LLM call, no commit
     mock_chat.assert_not_awaited()
     mock_db.commit.assert_not_awaited()
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_extract_and_merge_skips_no_op_description():
+    """
+    Deterministic backstop: even though the prompt says to leave a trait out
+    entirely when nothing changed, the model has been observed to include it
+    anyway with a description that just narrates "no new signal" — which
+    would otherwise overwrite a real description with junk.
+    """
+    convo = _fake_conversation()
+    message = ConversationMessage(
+        id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
+        role=MessageRole.STUDENT, content="something unrelated",
+    )
+    existing_trait = ProfileTrait(
+        id=uuid.uuid4(),
+        school_id=convo.school_id,
+        profile_id=uuid.uuid4(),
+        category=_CATEGORY,
+        trait_key=_TRAIT_KEY,
+        title="Curious",
+        description="Asks a lot of follow-up questions.",
+        score=0.8,
+        confidence=ConfidenceLabel.CONFIDENT,
+    )
+    fake_profile = MagicMock()
+    fake_profile.id = existing_trait.profile_id
+
+    messages_result = MagicMock()
+    messages_result.scalars.return_value.all.return_value = [message]
+    profile_result = MagicMock()
+    profile_result.scalar_one_or_none.return_value = fake_profile
+    traits_result = MagicMock()
+    traits_result.scalars.return_value.all.return_value = [existing_trait]
+
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.add = MagicMock()
+
+    no_op_response = json.dumps(
+        {
+            "observations": [
+                {
+                    "trait_key": _TRAIT_KEY,
+                    "category": _CATEGORY,
+                    "observed_score": 0.8,
+                    "title": "Curious",
+                    "description": "No new signal in this conversation; remains unchanged.",
+                    "teaching_tip": None,
+                }
+            ]
+        }
+    )
+
+    with patch(
+        "app.services.profile_extraction.chat_completion",
+        new=AsyncMock(return_value=no_op_response),
+    ):
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
+
+    # The original description survives untouched, and nothing is reported as updated
+    assert existing_trait.description == "Asks a lot of follow-up questions."
+    assert result == []
 
 
 def test_confidence_threshold_unchanged():

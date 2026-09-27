@@ -230,12 +230,12 @@ async def post_message(
     return reply
 
 
-async def end_conversation(conversation: Conversation, db: AsyncSession) -> None:
+async def end_conversation(conversation: Conversation, db: AsyncSession) -> list[ProfileTrait]:
     if conversation.ended_at is not None:
         raise _already_ended()
     conversation.ended_at = datetime.now(timezone.utc)
     await db.commit()
-    await profile_extraction.extract_and_merge(conversation, db)
+    return await profile_extraction.extract_and_merge(conversation, db)
 
 
 async def list_flags(school_id: uuid.UUID, db: AsyncSession) -> list[tuple[ConversationMessage, str]]:

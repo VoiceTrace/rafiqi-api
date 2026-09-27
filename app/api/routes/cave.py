@@ -9,9 +9,11 @@ from app.schemas.cave import (
     CaveConversationOut,
     CaveMessageIn,
     CaveMessageOut,
+    ConversationEndOut,
     ConversationStartOut,
     FlaggedMessageOut,
 )
+from app.schemas.profile import StudentTraitCardOut
 from app.services import cave as cave_svc
 from app.services import user as user_svc
 
@@ -109,7 +111,7 @@ async def post_message(
 
 @router.post(
     "/{conversation_id}/end",
-    status_code=204,
+    response_model=ConversationEndOut,
     summary="End a Cave chat",
     responses={
         404: {"description": "Conversation not found."},
@@ -120,16 +122,24 @@ async def end_conversation(
     conversation_id: uuid.UUID,
     current_user: Annotated[CurrentUser, Depends(require_student)],
     db: AsyncSession = Depends(get_db_session),
-) -> None:
+) -> ConversationEndOut:
     """
     Ends the conversation and runs profile extraction (A3) against its
     transcript, merging observations into the student's profile traits.
+    Returns exactly what changed from *this* conversation — `updated_traits`
+    is empty if it gave no real signal (e.g. very short, or everything said
+    was safety-flagged and excluded). For the student's whole profile, use
+    GET /profiles/me instead.
+
     Student access only, own conversation only.
     """
     conversation = await cave_svc.get_owned_conversation(
         conversation_id, current_user.id, current_user.school_id, db
     )
-    await cave_svc.end_conversation(conversation, db)
+    touched = await cave_svc.end_conversation(conversation, db)
+    return ConversationEndOut(
+        updated_traits=[StudentTraitCardOut.model_validate(t) for t in touched]
+    )
 
 
 @router.get(

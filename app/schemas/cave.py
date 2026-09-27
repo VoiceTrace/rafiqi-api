@@ -4,6 +4,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.profile import StudentTraitCardOut
+
 
 class MessageRole(StrEnum):
     STUDENT = "student"
@@ -47,6 +49,18 @@ class CaveConversationOut(BaseModel):
     started_at: datetime
     ended_at: datetime | None
     messages: list[CaveMessageOut]
+
+
+class ConversationEndOut(BaseModel):
+    """
+    A3, surfaced directly: what Rafiqi learned about the student from *this*
+    conversation specifically — not the student's whole profile. Empty when
+    the conversation gave no real signal (e.g. very short, or every message
+    was safety-flagged and excluded). Same narrative-only shape as A6's
+    GET /profiles/me — no `score` field, per the disclosure rule.
+    """
+
+    updated_traits: list[StudentTraitCardOut]
 
 
 class FlaggedMessageOut(BaseModel):

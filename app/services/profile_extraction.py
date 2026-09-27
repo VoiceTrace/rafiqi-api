@@ -35,9 +35,14 @@ Rules:
 specific signal for it. Don't guess to fill gaps.
 - For a trait_key that already has an entry: only include it if this new conversation adds \
 real signal — either reinforcing it (propose a score at or slightly above the current one) or \
-contradicting/complicating it (propose a lower score and an updated description). If nothing \
-in this conversation bears on an existing trait, leave it out entirely — do not repeat it \
-unchanged.
+contradicting/complicating it (propose a lower score and an updated description).
+- If nothing in this conversation bears on an existing trait, leave it out of the JSON array \
+entirely. Do NOT include it just to say nothing changed — there is no field for "no update" \
+and no reason to mention a trait you're not updating. A description like "no new signal" or \
+"remains unchanged" must never appear in your output; if you find yourself writing something \
+like that, delete that observation from the array instead.
+- `description` is a narrative read of the *student*, written fresh each time — never a note \
+about your own extraction process or what did/didn't change this session.
 - Never invent an observation the transcript doesn't support.
 
 Respond as a JSON object: {{"observations": [...]}}. Each observation has exactly these fields:
@@ -55,6 +60,20 @@ identifying
 Return {{"observations": []}} if nothing clear emerged. Respond with strict JSON only."""
 
 
+# Deterministic backstop for the "leave it out if nothing changed" prompt
+# instruction — catches the model narrating its own extraction process
+# instead of describing the student (see extract_and_merge's usage).
+_NO_OP_PHRASES = (
+    "no new signal", "no change", "remains unchanged", "unchanged from",
+    "nothing new", "previously noted", "previously observed", "no update",
+)
+
+
+def _is_no_op_description(description: str) -> bool:
+    lowered = description.lower()
+    return any(phrase in lowered for phrase in _NO_OP_PHRASES)
+
+
 def _profile_context(existing_by_key: dict[str, ProfileTrait]) -> str:
     if not existing_by_key:
         return "You don't know this student yet — no traits recorded so far."
@@ -65,7 +84,7 @@ def _profile_context(existing_by_key: dict[str, ProfileTrait]) -> str:
     return f"What you currently believe about this student:\n{lines}"
 
 
-async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> None:
+async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> list[ProfileTrait]:
     """
     A3: reads the conversation transcript and merges observations into the
     student's ProfileTrait rows. The model is shown the *current* profile
@@ -76,6 +95,10 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
     `_MAX_SCORE_DELTA_PER_SESSION`), as a stability guard the model itself
     doesn't need to reason about. Flagged (safety) turns are excluded from
     the transcript — a crisis/cheating moment isn't a learning-style signal.
+
+    Returns the traits created or updated by this call (possibly empty, e.g.
+    a short chat with no real signal) — the FE's "what Rafiqi learned about
+    you today" moment at the end of a session.
     """
     messages_result = await db.execute(
         select(ConversationMessage)
@@ -86,7 +109,7 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
         f"{msg.role}: {msg.content}" for msg in messages_result.scalars().all() if not msg.flagged
     )
     if not transcript.strip():
-        return
+        return []
 
     profile_result = await db.execute(
         select(StudentProfile).where(StudentProfile.student_id == conversation.student_id)
@@ -123,7 +146,9 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
         observations = parse_json_object(raw).get("observations", [])
     except (LLMError, json.JSONDecodeError, AttributeError) as exc:
         logger.warning("Profile extraction failed for conversation %s: %s", conversation.id, exc)
-        return
+        return []
+
+    touched: list[ProfileTrait] = []
 
     for obs in observations:
         trait_key = obs.get("trait_key")
@@ -136,6 +161,18 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
         title = obs.get("title") or trait_key.replace("_", " ").title()
         description = obs.get("description") or ""
         teaching_tip = obs.get("teaching_tip")
+
+        if _is_no_op_description(description):
+            # Prompt-only "leave it out if nothing changed" isn't 100% reliable —
+            # observed the model include a trait anyway with a description that's
+            # just commentary on its own extraction process (e.g. "no new signal,
+            # remains unchanged"). That text would otherwise overwrite a real
+            # description, so skip applying this observation rather than trust it.
+            logger.warning(
+                "Skipping no-op-looking extraction observation for trait_key=%s: %r",
+                trait_key, description,
+            )
+            continue
 
         existing = existing_by_key.get(trait_key)
         if existing is None:
@@ -159,6 +196,7 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
             )
             db.add(trait)
             existing_by_key[trait_key] = trait
+            touched.append(trait)
         else:
             delta = max(
                 -_MAX_SCORE_DELTA_PER_SESSION,
@@ -174,5 +212,13 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
             existing.description = description
             existing.teaching_tip = teaching_tip
             existing.source_conversation_id = conversation.id
+            touched.append(existing)
 
     await db.commit()
+    # updated_at is server-generated (server_default/onupdate) — refresh so the
+    # returned objects carry the real value rather than whatever was loaded
+    # before this call (or nothing at all, for a newly-created row).
+    for trait in touched:
+        await db.refresh(trait)
+
+    return touched
