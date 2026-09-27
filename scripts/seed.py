@@ -14,6 +14,7 @@ from app.services.review_catalog import seed_catalog
 from app.core.security import hash_password
 from app.models.school import School
 from app.models.user import User, UserRole
+from app.models.class_group import ClassEnrollment, ClassGroup
 import uuid
 
 engine = create_async_engine(settings.DATABASE_URL, echo=True)
@@ -52,12 +53,34 @@ async def seed():
         )
 
         db.add_all([teacher, student])
+        await db.flush()
+
+        class_group = ClassGroup(
+            id=uuid.uuid4(),
+            school_id=school.id,
+            teacher_id=teacher.id,
+            name="Grade 10 Physics A",
+            grade_level="Grade 10",
+            subject_id="physics",
+            academic_year="2026-2027",
+        )
+        db.add(class_group)
+        await db.flush()
+        db.add(
+            ClassEnrollment(
+                id=uuid.uuid4(),
+                school_id=school.id,
+                class_group_id=class_group.id,
+                student_id=student.id,
+            )
+        )
         await db.commit()
 
         print("\n--- Seed complete ---")
         print(f"School:  {school.name} ({school.id})")
         print(f"Teacher: {teacher.email} / teacher123")
         print(f"Student: {student.email} / student123")
+        print(f"Class:   {class_group.name} ({class_group.id})")
 
 
 if __name__ == "__main__":
