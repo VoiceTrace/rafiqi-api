@@ -16,5 +16,13 @@ class Settings(BaseSettings):
     MEDIA_DIR: str = "media"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    # LLM gateway (OpenRouter — OpenAI-compatible API, model chosen by string id
+    # so the cheap-tier model can be swapped without a code change)
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    CAVE_CHAT_MODEL: str = "moonshotai/kimi-k2"
+    SAFETY_CLASSIFIER_MODEL: str = "moonshotai/kimi-k2"
+    PROFILE_EXTRACTION_MODEL: str = "moonshotai/kimi-k2"
+
 
 settings = Settings()
