@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.class_group import ClassEnrollment, ClassGroup
-from app.models.review import ReviewAttempt, ReviewChapter, ReviewLesson
+from app.models.review import ReviewAttempt, ReviewChapter, ReviewLesson, ReviewSessionSummary
 from app.models.user import User, UserRole
 from app.schemas.teacher_insights import (
     ClassMasteryOut,
@@ -16,6 +16,13 @@ from app.schemas.teacher_insights import (
     MasteryFilterOut,
     StudentMasteryOut,
     StudentMasteryRow,
+    ClassMisconceptionsOut,
+    MisconceptionOut,
+    ReviewConceptOutcome,
+    ReviewSessionPage,
+    TeacherAttemptEvidence,
+    TeacherReviewSessionDetail,
+    TeacherReviewSessionItem,
 )
 from app.services.review import mastery_band
 
@@ -28,6 +35,38 @@ class InsightNotFound(Exception):
 
 class InsightValidationError(Exception):
     pass
+
+
+_ERROR_LABELS = {
+    "force_pair_unequal_magnitude": {
+        "en": "Treats the force pair as unequal in magnitude",
+        "ar": "يعتقد أن قوتي الفعل ورد الفعل غير متساويتين",
+    },
+    "force_pair_missing_reaction": {
+        "en": "Does not identify the reaction force",
+        "ar": "لا يحدد قوة رد الفعل",
+    },
+    "force_pair_incomplete_distinct_objects": {
+        "en": "Partly identifies that the forces act on different objects",
+        "ar": "يحدد جزئياً أن القوتين تؤثران في جسمين مختلفين",
+    },
+    "force_pair_missing_distinct_objects": {
+        "en": "Does not identify that the forces act on different objects",
+        "ar": "لا يحدد أن القوتين تؤثران في جسمين مختلفين",
+    },
+    "balanced_force_means_stopped": {
+        "en": "Assumes balanced forces mean an object must be stopped",
+        "ar": "يفترض أن اتزان القوى يعني أن الجسم متوقف",
+    },
+    "kinetic_energy_requires_motion": {
+        "en": "Does not connect kinetic energy with motion",
+        "ar": "لا يربط الطاقة الحركية بالحركة",
+    },
+    "equivalent_fraction_denominator_only": {
+        "en": "Changes only the denominator when forming an equivalent fraction",
+        "ar": "يغير المقام فقط عند تكوين كسر مكافئ",
+    },
+}
 
 
 async def _owned_class(
@@ -312,4 +351,249 @@ async def student_mastery(
             locale=locale,
         ),
         concepts=_concept_outputs(concept_students),
+    )
+
+
+def _session_concepts(summary: ReviewSessionSummary, content: dict, locale: Locale) -> list[ReviewConceptOutcome]:
+    return [
+        ReviewConceptOutcome(
+            concept_ref=item["concept_ref"],
+            title=_concept_title(content, locale, item["concept_ref"]),
+            outcome=item["outcome"],
+            completed_with_support=bool(item.get("completed_with_support", False)),
+        )
+        for item in summary.concepts
+    ]
+
+
+async def _session_rows(
+    db: AsyncSession,
+    school_id: uuid.UUID,
+    class_id: uuid.UUID,
+    subject_id: str,
+    chapter_id: str | None,
+    lesson_id: str | None,
+    from_date: date | None,
+    to_date: date | None,
+    student_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
+):
+    start, end = _date_bounds(from_date, to_date)
+    query = (
+        select(ReviewSessionSummary, User.full_name, ReviewLesson.content, ReviewLesson.chapter_id)
+        .join(ClassEnrollment, ClassEnrollment.student_id == ReviewSessionSummary.student_id)
+        .join(User, User.id == ReviewSessionSummary.student_id)
+        .join(ReviewLesson, ReviewLesson.id == ReviewSessionSummary.lesson_id)
+        .join(ReviewChapter, ReviewChapter.id == ReviewLesson.chapter_id)
+        .where(
+            ReviewSessionSummary.school_id == school_id,
+            ClassEnrollment.school_id == school_id,
+            ClassEnrollment.class_group_id == class_id,
+            ClassEnrollment.is_active.is_(True),
+            User.school_id == school_id,
+            User.role == UserRole.STUDENT,
+            User.is_active.is_(True),
+            ReviewChapter.subject_id == subject_id,
+        )
+        .order_by(ReviewSessionSummary.completed_at.desc(), ReviewSessionSummary.session_id)
+    )
+    if chapter_id:
+        query = query.where(ReviewLesson.chapter_id == chapter_id)
+    if lesson_id:
+        query = query.where(ReviewSessionSummary.lesson_id == lesson_id)
+    if student_id:
+        query = query.where(ReviewSessionSummary.student_id == student_id)
+    if session_id:
+        query = query.where(ReviewSessionSummary.session_id == session_id)
+    if start:
+        query = query.where(ReviewSessionSummary.completed_at >= start)
+    if end:
+        query = query.where(ReviewSessionSummary.completed_at < end)
+    return (await db.execute(query)).all()
+
+
+async def _dominant_errors(
+    db: AsyncSession, school_id: uuid.UUID, session_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str | None]:
+    if not session_ids:
+        return {}
+    attempts = (
+        await db.execute(
+            select(ReviewAttempt.session_id, ReviewAttempt.error_type)
+            .where(
+                ReviewAttempt.school_id == school_id,
+                ReviewAttempt.session_id.in_(session_ids),
+                ReviewAttempt.error_type.is_not(None),
+            )
+            .order_by(ReviewAttempt.created_at, ReviewAttempt.id)
+        )
+    ).all()
+    counts = defaultdict(Counter)
+    for session_id, error_type in attempts:
+        counts[session_id][error_type] += 1
+    return {
+        session_id: (counter.most_common(1)[0][0] if counter else None)
+        for session_id, counter in counts.items()
+    }
+
+
+async def review_sessions(
+    db: AsyncSession,
+    school_id: uuid.UUID,
+    teacher_id: uuid.UUID,
+    class_id: uuid.UUID,
+    subject_id: str | None,
+    chapter_id: str | None,
+    lesson_id: str | None,
+    from_date: date | None,
+    to_date: date | None,
+    locale: Locale,
+    page: int,
+    page_size: int,
+    student_id: uuid.UUID | None = None,
+    mastery_outcome: str | None = None,
+) -> ReviewSessionPage:
+    group = await _owned_class(db, school_id, teacher_id, class_id)
+    selected_subject = subject_id or group.subject_id
+    if student_id is not None and await db.scalar(
+        select(ClassEnrollment.id)
+        .join(User, User.id == ClassEnrollment.student_id)
+        .where(
+            ClassEnrollment.school_id == school_id,
+            ClassEnrollment.class_group_id == class_id,
+            ClassEnrollment.student_id == student_id,
+            ClassEnrollment.is_active.is_(True),
+            User.school_id == school_id,
+            User.role == UserRole.STUDENT,
+            User.is_active.is_(True),
+        )
+    ) is None:
+        raise InsightNotFound()
+    rows = await _session_rows(
+        db, school_id, class_id, selected_subject, chapter_id, lesson_id,
+        from_date, to_date, student_id=student_id,
+    )
+    if mastery_outcome:
+        rows = [row for row in rows if any(item.get("outcome") == mastery_outcome for item in row[0].concepts)]
+    total = len(rows)
+    rows = rows[(page - 1) * page_size:page * page_size]
+    errors = await _dominant_errors(db, school_id, [row[0].session_id for row in rows])
+    items = [
+        TeacherReviewSessionItem(
+            session_id=summary.session_id,
+            student_id=summary.student_id,
+            student_name=student_name,
+            lesson_id=summary.lesson_id,
+            lesson_title=(content.get(locale) or content.get("en") or {}).get("title", summary.lesson_id),
+            subject_id=selected_subject,
+            chapter_id=row_chapter_id,
+            concepts=_session_concepts(summary, content, locale),
+            total_attempts=summary.total_attempts,
+            dominant_error_type=errors.get(summary.session_id),
+            completed_at=summary.completed_at,
+        )
+        for summary, student_name, content, row_chapter_id in rows
+    ]
+    return ReviewSessionPage(items=items, total=total, page=page, page_size=page_size)
+
+
+async def review_session_detail(
+    db: AsyncSession,
+    school_id: uuid.UUID,
+    teacher_id: uuid.UUID,
+    class_id: uuid.UUID,
+    session_id: uuid.UUID,
+    locale: Locale,
+) -> TeacherReviewSessionDetail:
+    group = await _owned_class(db, school_id, teacher_id, class_id)
+    rows = await _session_rows(
+        db, school_id, class_id, group.subject_id, None, None, None, None,
+        session_id=session_id,
+    )
+    if not rows:
+        raise InsightNotFound()
+    summary, student_name, content, chapter_id = rows[0]
+    attempts = list(
+        (
+            await db.scalars(
+                select(ReviewAttempt)
+                .where(
+                    ReviewAttempt.school_id == school_id,
+                    ReviewAttempt.student_id == summary.student_id,
+                    ReviewAttempt.session_id == session_id,
+                )
+                .order_by(ReviewAttempt.created_at, ReviewAttempt.attempt_number, ReviewAttempt.id)
+            )
+        ).all()
+    )
+    errors = Counter(item.error_type for item in attempts if item.error_type)
+    return TeacherReviewSessionDetail(
+        session_id=summary.session_id,
+        student_id=summary.student_id,
+        student_name=student_name,
+        lesson_id=summary.lesson_id,
+        lesson_title=(content.get(locale) or content.get("en") or {}).get("title", summary.lesson_id),
+        subject_id=group.subject_id,
+        chapter_id=chapter_id,
+        concepts=_session_concepts(summary, content, locale),
+        total_attempts=summary.total_attempts,
+        dominant_error_type=errors.most_common(1)[0][0] if errors else None,
+        completed_at=summary.completed_at,
+        attempts=[TeacherAttemptEvidence.model_validate(item, from_attributes=True) for item in attempts],
+    )
+
+
+async def class_misconceptions(
+    db: AsyncSession,
+    school_id: uuid.UUID,
+    teacher_id: uuid.UUID,
+    class_id: uuid.UUID,
+    subject_id: str | None,
+    chapter_id: str | None,
+    lesson_id: str | None,
+    from_date: date | None,
+    to_date: date | None,
+    locale: Locale,
+) -> ClassMisconceptionsOut:
+    group = await _owned_class(db, school_id, teacher_id, class_id)
+    selected_subject = subject_id or group.subject_id
+    rows = await _evidence(
+        db, school_id, class_id, selected_subject, chapter_id, lesson_id,
+        from_date, to_date,
+    )
+    students_with_evidence = len({attempt.student_id for attempt, *_ in rows})
+    grouped = defaultdict(list)
+    for attempt, *_ in rows:
+        if attempt.error_type:
+            grouped[(attempt.error_type, attempt.concept_ref)].append(attempt)
+    items = []
+    for (error_type, concept_ref), attempts in grouped.items():
+        student_count = len({item.student_id for item in attempts})
+        labels = _ERROR_LABELS.get(error_type, {})
+        items.append(
+            MisconceptionOut(
+                error_type=error_type,
+                label=labels.get(locale) or labels.get("en") or error_type,
+                concept_ref=concept_ref,
+                student_count=student_count,
+                attempt_count=len(attempts),
+                students_with_evidence=students_with_evidence,
+                percentage=(student_count / students_with_evidence * 100) if students_with_evidence else 0,
+                lesson_ids=sorted({item.lesson_id for item in attempts}),
+                last_occurred_at=max(item.created_at for item in attempts),
+            )
+        )
+    items.sort(key=lambda item: (-item.student_count, -item.attempt_count, item.error_type))
+    return ClassMisconceptionsOut(
+        class_id=class_id,
+        filters=MasteryFilterOut(
+            subject_id=selected_subject,
+            chapter_id=chapter_id,
+            lesson_id=lesson_id,
+            from_date=from_date,
+            to_date=to_date,
+            locale=locale,
+        ),
+        students_with_evidence=students_with_evidence,
+        items=items,
     )

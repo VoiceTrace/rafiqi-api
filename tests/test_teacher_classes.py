@@ -11,7 +11,7 @@ from sqlalchemy.pool import NullPool
 from app.api.deps import CurrentUser, get_db_session, require_teacher
 from app.core.database import Base
 from app.main import app
-from app.models import ReviewAttempt, ReviewLesson, ReviewSession, School, User
+from app.models import ReviewAttempt, ReviewLesson, ReviewSession, ReviewSessionSummary, School, User
 from app.services.review_catalog import seed_catalog
 
 
@@ -224,6 +224,24 @@ async def test_class_and_student_mastery_use_latest_filtered_evidence(class_api)
                 ),
             ]
         )
+        db.add(
+            ReviewSessionSummary(
+                school_id=ids["school"],
+                student_id=ids["student"],
+                session_id=session.id,
+                lesson_id=lesson.id,
+                concepts=[
+                    {
+                        "concept_ref": "action-reaction",
+                        "outcome": "developing",
+                        "completed_with_support": True,
+                    }
+                ],
+                total_attempts=3,
+                calculation_version="mvp-v1",
+                completed_at=when,
+            )
+        )
         await db.commit()
 
     report = await client.get(
@@ -261,10 +279,55 @@ async def test_class_and_student_mastery_use_latest_filtered_evidence(class_api)
     )
     assert invalid.status_code == 422
 
+    sessions = await client.get(
+        f"/teacher/classes/{class_id}/review-sessions",
+        params={"lesson_id": "newton-third-law", "mastery_outcome": "developing"},
+    )
+    assert sessions.status_code == 200, sessions.text
+    assert sessions.json()["total"] == 1
+    session_item = sessions.json()["items"][0]
+    assert session_item["session_id"] == str(session.id)
+    assert session_item["dominant_error_type"] in {
+        "force_pair_unequal_magnitude", "force_pair_incomplete_distinct_objects"
+    }
+
+    student_sessions = await client.get(
+        f"/teacher/students/{ids['student']}/review-sessions",
+        params={"class_id": class_id, "locale": "ar"},
+    )
+    assert student_sessions.status_code == 200
+    assert student_sessions.json()["items"][0]["concepts"][0]["title"] == "الفعل ورد الفعل"
+
+    session_detail = await client.get(
+        f"/teacher/review-sessions/{session.id}", params={"class_id": class_id}
+    )
+    assert session_detail.status_code == 200, session_detail.text
+    assert len(session_detail.json()["attempts"]) == 3
+    first_force_attempt = next(
+        item for item in session_detail.json()["attempts"]
+        if item["question_id"] == "force-pairs" and item["attempt_number"] == 1
+    )
+    assert first_force_attempt["response_text"] == "wrong"
+
+    misconceptions = await client.get(
+        f"/teacher/classes/{class_id}/misconceptions",
+        params={"lesson_id": "newton-third-law", "locale": "en"},
+    )
+    assert misconceptions.status_code == 200, misconceptions.text
+    assert misconceptions.json()["students_with_evidence"] == 1
+    assert sum(item["attempt_count"] for item in misconceptions.json()["items"]) == 2
+    assert all(item["percentage"] == 100 for item in misconceptions.json()["items"])
+
     identity["user"] = CurrentUser(ids["other_teacher"], ids["school"], "teacher")
     assert (await client.get(f"/teacher/classes/{class_id}/mastery")).status_code == 404
     assert (
         await client.get(
             f"/teacher/students/{ids['student']}/mastery", params={"class_id": class_id}
+        )
+    ).status_code == 404
+    assert (await client.get(f"/teacher/classes/{class_id}/review-sessions")).status_code == 404
+    assert (
+        await client.get(
+            f"/teacher/review-sessions/{session.id}", params={"class_id": class_id}
         )
     ).status_code == 404
