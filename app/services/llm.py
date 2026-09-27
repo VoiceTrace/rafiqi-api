@@ -26,6 +26,16 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+async def aclose() -> None:
+    """Closes the shared client's open connections. Call from app shutdown
+    (see app/main.py's lifespan) — without this the process holds sockets
+    open with no release until it exits."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
 class LLMError(Exception):
     """Raised on any non-2xx response or transport failure from the LLM gateway."""
 

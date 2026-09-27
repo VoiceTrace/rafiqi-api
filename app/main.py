@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -6,6 +7,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth, cave, profiles, review, users
 from app.core.config import settings
+from app.services import llm
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # Release the shared LLM gateway client's open connections on shutdown —
+    # it's a module-level singleton reused across every request (see
+    # app/services/llm.py), so nothing else closes it.
+    await llm.aclose()
 
 description = """
 ## Rafiqi API
@@ -112,6 +123,7 @@ app = FastAPI(
     },
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
