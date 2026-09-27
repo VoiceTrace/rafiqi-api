@@ -109,3 +109,33 @@ class ProfileTrait(Base):
     source_conversation: Mapped["Conversation | None"] = relationship(
         back_populates="traits"
     )
+    corrections: Mapped[list["ProfileTraitCorrection"]] = relationship(
+        back_populates="trait", cascade="all, delete-orphan"
+    )
+
+
+class ProfileTraitCorrection(Base):
+    """
+    A5: a student's "not quite me?" flag on a trait card, with their reason.
+    Immutable audit log — resolved synchronously in the same request (see
+    app/services/profile.py), `resolution_note` records what the AI did about
+    it. Kept even after resolution for A4-style trust/debuggability: a teacher
+    (or the student) can see a trait was disputed and how it was handled.
+    """
+
+    __tablename__ = "profile_trait_corrections"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    trait_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("profile_traits.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    trait: Mapped["ProfileTrait"] = relationship(back_populates="corrections")
