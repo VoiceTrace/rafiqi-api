@@ -85,3 +85,43 @@ class StudentProfileOut(BaseModel):
     traits: list[ProfileTraitOut]
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# A6 — student-facing view.
+#
+# Disclosure rule (docs/artifact.md §1, A6, Blocker): narrative reads and
+# teaching-relevant statements only — no numeric trait scores, no comparative
+# framing. This schema deliberately has no `score` field; only the derived
+# label. Never widen this to include `score` without a new disclosure
+# decision.
+# ---------------------------------------------------------------------------
+
+class StudentTraitCardOut(BaseModel):
+    id: uuid.UUID
+    category: TraitCategory
+    trait_key: str
+    title: str
+    description: str
+    teaching_tip: str | None
+    confidence: ConfidenceLabel
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StudentProfileViewOut(BaseModel):
+    cards: list[StudentTraitCardOut]
+
+
+# ---------------------------------------------------------------------------
+# A5 — "not quite me?" correction
+# ---------------------------------------------------------------------------
+
+class TraitFlagIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+class TraitFlagOut(BaseModel):
+    trait: StudentTraitCardOut
+    acknowledgement: str
