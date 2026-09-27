@@ -98,7 +98,9 @@ def test_confidence_label_from_score(score, expected_label):
 # ---------------------------------------------------------------------------
 
 def test_trait_category_values():
-    assert set(TraitCategory) == {"preferences", "goals"}
+    assert set(TraitCategory) == {
+        "preferences", "goals", "wellbeing", "study_habits", "social", "context",
+    }
 
 
 def test_user_role_values():

@@ -11,6 +11,10 @@ from app.core.database import Base
 class TraitCategory(StrEnum):
     PREFERENCES = "preferences"
     GOALS = "goals"
+    WELLBEING = "wellbeing"
+    STUDY_HABITS = "study_habits"
+    SOCIAL = "social"
+    CONTEXT = "context"
 
 
 class ConfidenceLabel(StrEnum):
