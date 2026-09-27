@@ -38,6 +38,13 @@ class CaveMessageOut(BaseModel):
 class ConversationStartOut(BaseModel):
     conversation_id: uuid.UUID
     message: CaveMessageOut
+    is_new: bool = Field(
+        ...,
+        description="False means an existing open conversation was resumed — "
+        "`message` is its most recent turn, not a fresh greeting. The "
+        "frontend should fetch GET /conversations/{id} for the full history "
+        "rather than treating `message` as the only content in that case.",
+    )
 
 
 class CaveConversationOut(BaseModel):

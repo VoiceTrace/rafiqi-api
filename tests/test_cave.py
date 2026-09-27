@@ -155,6 +155,81 @@ async def test_post_message_rejects_ended_conversation():
 
 
 # ---------------------------------------------------------------------------
+# start_conversation: at most one open conversation per student
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_conversation_resumes_existing_open_conversation():
+    convo = _fake_conversation()
+    last_message = MagicMock(spec=ConversationMessage)
+    mock_db = AsyncMock()
+
+    with (
+        patch("app.services.cave._open_conversations", new=AsyncMock(return_value=[convo])),
+        patch("app.services.cave.list_messages", new=AsyncMock(return_value=[MagicMock(), last_message])),
+        patch("app.services.cave.chat_completion", new=AsyncMock()) as mock_chat,
+    ):
+        returned_convo, message, is_new = await cave_svc.start_conversation(
+            convo.student_id, convo.school_id, "Ahmed", mock_db
+        )
+
+    mock_chat.assert_not_awaited()  # resuming never makes a fresh LLM call
+    assert returned_convo is convo
+    assert message is last_message  # most recent turn, not a fresh greeting
+    assert is_new is False
+
+
+@pytest.mark.asyncio
+async def test_start_conversation_ends_other_stale_open_conversations():
+    current = _fake_conversation()
+    stale_one = _fake_conversation()
+    stale_two = _fake_conversation()
+    mock_db = AsyncMock()
+
+    with (
+        patch(
+            "app.services.cave._open_conversations",
+            new=AsyncMock(return_value=[current, stale_one, stale_two]),  # most recent first
+        ),
+        patch("app.services.cave.list_messages", new=AsyncMock(return_value=[MagicMock()])),
+        patch("app.services.cave.end_conversation", new=AsyncMock()) as mock_end,
+    ):
+        returned_convo, _message, is_new = await cave_svc.start_conversation(
+            current.student_id, current.school_id, "Ahmed", mock_db
+        )
+
+    assert returned_convo is current
+    assert is_new is False
+    # The current (most recent) conversation is resumed, not auto-ended —
+    # only the other, older open ones are swept.
+    assert mock_end.await_args_list == [
+        ((stale_one, mock_db),), ((stale_two, mock_db),),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_conversation_creates_fresh_when_none_open():
+    student_id, school_id = uuid.uuid4(), uuid.uuid4()
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+
+    with (
+        patch("app.services.cave._open_conversations", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Hey there!")) as mock_chat,
+    ):
+        conversation, message, is_new = await cave_svc.start_conversation(
+            student_id, school_id, "Ahmed", mock_db
+        )
+
+    mock_chat.assert_awaited_once()
+    assert is_new is True
+    assert message.content == "Hey there!"
+    assert message.role == MessageRole.RAFIQI
+    assert conversation.student_id == student_id
+
+
+# ---------------------------------------------------------------------------
 # get_owned_conversation: cross-tenant isolation
 # ---------------------------------------------------------------------------
 

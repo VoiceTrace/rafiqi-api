@@ -124,9 +124,53 @@ async def list_messages(conversation_id: uuid.UUID, db: AsyncSession) -> list[Co
     return list(result.scalars().all())
 
 
+async def _open_conversations(
+    student_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
+) -> list[Conversation]:
+    result = await db.execute(
+        select(Conversation)
+        .where(
+            Conversation.student_id == student_id,
+            Conversation.school_id == school_id,
+            Conversation.ended_at.is_(None),
+        )
+        .order_by(Conversation.started_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def start_conversation(
     student_id: uuid.UUID, school_id: uuid.UUID, student_name: str, db: AsyncSession
-) -> tuple[Conversation, ConversationMessage]:
+) -> tuple[Conversation, ConversationMessage, bool]:
+    """
+    Returns the student's current open conversation if one exists — resumed
+    as-is, no new LLM call — otherwise starts a fresh one. Enforces "at most
+    one open conversation per student" as an invariant here rather than
+    relying on the frontend to always call /end: any *other* open
+    conversations found (e.g. from a closed tab, lost connection, or crash
+    that never reached /end) are auto-ended along the way, running A3
+    extraction for each. This is the lazy-cleanup alternative to a
+    background reaper job, which this stack has no infrastructure for.
+
+    Third return value is `is_new` — False means the caller got back an
+    existing conversation's most recent message, not a fresh greeting; the
+    frontend should fetch the full history (GET /conversations/{id}) to
+    resume rendering it rather than treating `message` as the only content.
+    """
+    open_conversations = await _open_conversations(student_id, school_id, db)
+    if open_conversations:
+        current, *stale = open_conversations
+        for stale_convo in stale:
+            await end_conversation(stale_convo, db)
+
+        messages = await list_messages(current.id, db)
+        if messages:
+            return current, messages[-1], False
+        # An open conversation with zero messages shouldn't normally happen
+        # (start_conversation always writes an opening message before
+        # committing), but fall through to starting fresh rather than
+        # returning something with no content if it ever does.
+
     conversation = Conversation(id=uuid.uuid4(), school_id=school_id, student_id=student_id)
     db.add(conversation)
     await db.flush()
@@ -158,7 +202,7 @@ async def start_conversation(
     await db.commit()
     await db.refresh(conversation)
     await db.refresh(opening)
-    return conversation, opening
+    return conversation, opening, True
 
 
 async def post_message(

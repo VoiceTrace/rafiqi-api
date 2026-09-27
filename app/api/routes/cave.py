@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db_session, require_student, require_teacher
@@ -23,24 +23,34 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 @router.post(
     "",
     response_model=ConversationStartOut,
-    status_code=201,
-    summary="Start a Cave chat",
+    status_code=200,
+    summary="Start or resume a Cave chat",
     responses={502: {"description": "Rafiqi is unavailable right now."}},
 )
 async def start_conversation(
+    response: Response,
     current_user: Annotated[CurrentUser, Depends(require_student)],
     db: AsyncSession = Depends(get_db_session),
 ) -> ConversationStartOut:
     """
-    Starts a new Rafiqi's Cave conversation (A2) and returns Rafiqi's opening
-    message. Student access only.
+    Returns the student's current open conversation if one exists (resumed
+    as-is — fetch GET /conversations/{id} for its full history), otherwise
+    starts a fresh one and returns Rafiqi's opening message (`is_new: true`,
+    `201`). At most one conversation is ever left open per student: any
+    *other* stale open conversation found (e.g. an abandoned tab) is
+    auto-ended along the way, running profile extraction for it.
+
+    Student access only.
     """
     student = await user_svc.get_me(current_user.id, db)
-    conversation, opening = await cave_svc.start_conversation(
+    conversation, message, is_new = await cave_svc.start_conversation(
         current_user.id, current_user.school_id, student.full_name, db
     )
+    response.status_code = status.HTTP_201_CREATED if is_new else status.HTTP_200_OK
     return ConversationStartOut(
-        conversation_id=conversation.id, message=CaveMessageOut.model_validate(opening)
+        conversation_id=conversation.id,
+        message=CaveMessageOut.model_validate(message),
+        is_new=is_new,
     )
 
 
