@@ -16,6 +16,9 @@ from app.models.school import School
 from app.models.user import User, UserRole
 from app.models.class_group import ClassEnrollment, ClassGroup
 import uuid
+from datetime import datetime, timezone
+
+from app.models.review import MasteryRecord, ReviewAttempt, ReviewLesson, ReviewSession, ReviewSessionSummary
 
 engine = create_async_engine(settings.DATABASE_URL, echo=True)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
@@ -74,6 +77,59 @@ async def seed():
                 student_id=student.id,
             )
         )
+        await db.flush()
+
+        lesson = await db.get(ReviewLesson, "newton-third-law")
+        completed_at = datetime.now(timezone.utc)
+        review_session = ReviewSession(
+            id=uuid.uuid4(),
+            school_id=school.id,
+            student_id=student.id,
+            lesson_id=lesson.id,
+            content=lesson.content,
+            state={"complete": True, "resolved": True, "events": []},
+            version=4,
+        )
+        db.add(review_session)
+        await db.flush()
+        db.add_all(
+            [
+                ReviewAttempt(
+                    school_id=school.id, student_id=student.id, session_id=review_session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="force-pairs",
+                    concept_ref="action-reaction", response_text="A smaller force backward",
+                    option_id="smaller", correctness_score=0, error_type="force_pair_unequal_magnitude",
+                    hint_level=0, assisted=False, attempt_number=1, locale="en", created_at=completed_at,
+                ),
+                ReviewAttempt(
+                    school_id=school.id, student_id=student.id, session_id=review_session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="force-pairs",
+                    concept_ref="action-reaction", response_text="An equal force backward",
+                    option_id="equal", correctness_score=1, error_type=None,
+                    hint_level=1, assisted=True, attempt_number=2, locale="en", created_at=completed_at,
+                ),
+                ReviewAttempt(
+                    school_id=school.id, student_id=student.id, session_id=review_session.id,
+                    lesson_id=lesson.id, request_id=uuid.uuid4(), question_id="different-objects",
+                    concept_ref="action-reaction", response_text="They act on different objects",
+                    option_id=None, correctness_score=1, error_type=None,
+                    hint_level=0, assisted=False, attempt_number=1, locale="en", created_at=completed_at,
+                ),
+                MasteryRecord(
+                    school_id=school.id, student_id=student.id, subject_id="physics",
+                    concept_ref="action-reaction", mastery_score=1, mastery_band="secure",
+                    evidence_count=2, attempt_count=3, assisted_evidence_count=1,
+                    dominant_error_type="force_pair_unequal_magnitude", calculation_version="mvp-v1",
+                    last_attempt_at=completed_at,
+                ),
+                ReviewSessionSummary(
+                    school_id=school.id, student_id=student.id, session_id=review_session.id,
+                    lesson_id=lesson.id,
+                    concepts=[{"concept_ref": "action-reaction", "outcome": "secure", "completed_with_support": True}],
+                    total_attempts=3, calculation_version="mvp-v1", completed_at=completed_at,
+                ),
+            ]
+        )
         await db.commit()
 
         print("\n--- Seed complete ---")
@@ -81,6 +137,7 @@ async def seed():
         print(f"Teacher: {teacher.email} / teacher123")
         print(f"Student: {student.email} / student123")
         print(f"Class:   {class_group.name} ({class_group.id})")
+        print(f"Review:  {lesson.content['en']['title']} completed ({review_session.id})")
 
 
 if __name__ == "__main__":
