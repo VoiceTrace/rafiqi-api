@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.errors import ErrorCode
 from app.models.profile import ConfidenceLabel, ProfileTrait, ProfileTraitCorrection, StudentProfile
 from app.schemas.profile import CONFIDENCE_THRESHOLD
-from app.services.llm import LLMError, chat_completion
+from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ async def flag_trait(
             json_mode=True,
             max_tokens=300,
         )
-        verdict = json.loads(raw)
+        verdict = parse_json_object(raw)
     except (LLMError, json.JSONDecodeError) as exc:
         logger.warning("Trait correction resolution failed for trait %s: %s", trait_id, exc)
 

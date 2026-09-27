@@ -10,7 +10,7 @@ from app.models.conversation import Conversation
 from app.models.message import ConversationMessage
 from app.models.profile import ConfidenceLabel, ProfileTrait, StudentProfile
 from app.schemas.profile import CONFIDENCE_THRESHOLD, TraitCategory, TraitKey
-from app.services.llm import LLMError, chat_completion
+from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> Non
             json_mode=True,
             max_tokens=1000,
         )
-        observations = json.loads(raw).get("observations", [])
+        observations = parse_json_object(raw).get("observations", [])
     except (LLMError, json.JSONDecodeError, AttributeError) as exc:
         logger.warning("Profile extraction failed for conversation %s: %s", conversation.id, exc)
         return

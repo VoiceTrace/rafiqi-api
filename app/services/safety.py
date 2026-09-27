@@ -3,7 +3,7 @@ import logging
 
 from app.core.config import settings
 from app.models.message import SafetyCategory
-from app.services.llm import LLMError, chat_completion
+from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ async def classify_message(text: str) -> SafetyCategory | None:
             json_mode=True,
             max_tokens=20,
         )
-        category = json.loads(raw).get("category")
+        category = parse_json_object(raw).get("category")
     except (LLMError, json.JSONDecodeError, AttributeError) as exc:
         logger.warning("Safety classifier failed, defaulting to unflagged: %s", exc)
         return None
