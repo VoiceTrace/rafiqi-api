@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.api.deps import CurrentUser, require_student, require_teacher
 from app.models.user import UserRole
+from app.schemas.auth import TokenResponse
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,12 @@ def test_token_expires_in_configured_minutes():
 
     # Should be close to ACCESS_TOKEN_EXPIRE_MINUTES (allow a few seconds drift)
     assert settings.ACCESS_TOKEN_EXPIRE_MINUTES - 0.1 < minutes_until_expiry <= settings.ACCESS_TOKEN_EXPIRE_MINUTES
+
+
+def test_token_response_exposes_configured_lifetime():
+    response = TokenResponse(access_token="access", refresh_token="refresh")
+
+    assert response.expires_in == settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
 
 def test_tampered_token_raises():
