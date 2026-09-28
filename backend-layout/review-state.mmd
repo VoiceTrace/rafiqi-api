@@ -1,0 +1,14 @@
+stateDiagram-v2
+    [*] --> AwaitingAnswer: create review
+    AwaitingAnswer --> AwaitingAnswer: hint or help / assistance true
+    AwaitingAnswer --> AwaitingAnswer: incorrect or partial answer / fewer than 3 attempts
+    AwaitingAnswer --> Resolved: score equals 1 or third attempt
+    Resolved --> Resolved: help
+    Resolved --> AwaitingAnswer: next / more questions; reset question counters
+    Resolved --> Complete: next / last question; save summary
+    Complete --> Complete: help / summary remains unchanged
+    note right of AwaitingAnswer
+        chat maps to help or answer
+        state is stored inside JSON
+        invalid or stale actions return errors
+    end note

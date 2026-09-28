@@ -1,0 +1,1295 @@
+{
+  "commit": "ad0717cefe31da9b797e1234d94f887a15fde07a",
+  "migration_head": "83bcb2215849",
+  "tables": [
+    {
+      "name": "review_subjects",
+      "purpose": "Global bilingual subject catalog, shared across schools.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "title",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": []
+    },
+    {
+      "name": "schools",
+      "purpose": "Tenant root: school identity.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR(255)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": []
+    },
+    {
+      "name": "review_chapters",
+      "purpose": "Global bilingual chapters belonging to subjects.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "subject_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "title",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (subject_id) → review_subjects.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_review_chapters_subject_id",
+          "definition": "INDEX (subject_id)"
+        }
+      ]
+    },
+    {
+      "name": "users",
+      "purpose": "Teachers and students share one table; email is globally unique. Deactivation sets is_active=false.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR(255)",
+          "nullable": false,
+          "keys": [
+            "UK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "full_name",
+          "type": "VARCHAR(255)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "role",
+          "type": "VARCHAR(20)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "hashed_password",
+          "type": "VARCHAR(255)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "is_active",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "keys": [],
+          "database_default": "true",
+          "orm_default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "avatar_url",
+          "type": "TEXT",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "unnamed",
+          "definition": "UNIQUE (email)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_users_school_id",
+          "definition": "INDEX (school_id)"
+        }
+      ]
+    },
+    {
+      "name": "conversations",
+      "purpose": "Lightweight Cave-session scaffold. Does not store messages and has no mounted conversation API.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "started_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "ended_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_conversations_school_id",
+          "definition": "INDEX (school_id)"
+        },
+        {
+          "name": "ix_conversations_student_id",
+          "definition": "INDEX (student_id)"
+        }
+      ]
+    },
+    {
+      "name": "mastery_records",
+      "purpose": "Recomputable concept mastery by school, student and subject.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "subject_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "concept_ref",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "mastery_score",
+          "type": "FLOAT",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "mastery_band",
+          "type": "VARCHAR(20)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "evidence_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "attempt_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "assisted_evidence_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "dominant_error_type",
+          "type": "VARCHAR(100)",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "calculation_version",
+          "type": "VARCHAR(20)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": "mvp-v1"
+        },
+        {
+          "name": "last_attempt_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "ck_mastery_assisted_count",
+          "definition": "CHECK assisted_evidence_count >= 0 AND assisted_evidence_count <= evidence_count"
+        },
+        {
+          "name": "ck_mastery_attempt_count",
+          "definition": "CHECK attempt_count >= evidence_count"
+        },
+        {
+          "name": "ck_mastery_band",
+          "definition": "CHECK mastery_band IN ('needs_support', 'developing', 'secure')"
+        },
+        {
+          "name": "ck_mastery_evidence_count",
+          "definition": "CHECK evidence_count >= 1"
+        },
+        {
+          "name": "ck_mastery_score",
+          "definition": "CHECK mastery_score >= 0 AND mastery_score <= 1"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (subject_id) → review_subjects.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "uq_mastery_student_concept",
+          "definition": "UNIQUE (school_id, student_id, subject_id, concept_ref)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_mastery_records_school_id",
+          "definition": "INDEX (school_id)"
+        },
+        {
+          "name": "ix_mastery_records_student_id",
+          "definition": "INDEX (student_id)"
+        },
+        {
+          "name": "ix_mastery_records_subject_id",
+          "definition": "INDEX (subject_id)"
+        }
+      ]
+    },
+    {
+      "name": "refresh_tokens",
+      "purpose": "Hashed refresh-token credentials, expiry and revocation; tenant ownership is indirect through users.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "user_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "token_hash",
+          "type": "VARCHAR(64)",
+          "nullable": false,
+          "keys": [
+            "UK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "expires_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "revoked_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (user_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_refresh_tokens_token_hash",
+          "definition": "UNIQUE INDEX (token_hash)"
+        },
+        {
+          "name": "ix_refresh_tokens_user_id",
+          "definition": "INDEX (user_id)"
+        }
+      ]
+    },
+    {
+      "name": "review_lessons",
+      "purpose": "Global lessons with bilingual JSON content, concepts, questions and private rubrics.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "content",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "chapter_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "fk_review_lesson_chapter",
+          "definition": "FK (chapter_id) → review_chapters.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_review_lessons_chapter_id",
+          "definition": "INDEX (chapter_id)"
+        }
+      ]
+    },
+    {
+      "name": "student_profiles",
+      "purpose": "Optional one-to-one profile anchor for a user; no dedicated profile endpoint is currently mounted.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK",
+            "UK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "unnamed",
+          "definition": "UNIQUE (student_id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_student_profiles_school_id",
+          "definition": "INDEX (school_id)"
+        }
+      ]
+    },
+    {
+      "name": "profile_traits",
+      "purpose": "Profile preferences/goals, confidence and optional conversation provenance; no mounted trait API.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "profile_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "source_conversation_id",
+          "type": "UUID",
+          "nullable": true,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "category",
+          "type": "VARCHAR(50)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "trait_key",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "title",
+          "type": "VARCHAR(255)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "teaching_tip",
+          "type": "TEXT",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "score",
+          "type": "FLOAT",
+          "nullable": false,
+          "keys": [],
+          "database_default": "0.0",
+          "orm_default": "0.0"
+        },
+        {
+          "name": "confidence",
+          "type": "VARCHAR(20)",
+          "nullable": false,
+          "keys": [],
+          "database_default": "still_forming",
+          "orm_default": "still_forming"
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (source_conversation_id) → conversations.id; ON DELETE SET NULL"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (profile_id) → student_profiles.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_profile_traits_profile_id",
+          "definition": "INDEX (profile_id)"
+        },
+        {
+          "name": "ix_profile_traits_school_id",
+          "definition": "INDEX (school_id)"
+        }
+      ]
+    },
+    {
+      "name": "review_sessions",
+      "purpose": "One persistent review per school/student/lesson; lesson snapshot and conversation state are JSON.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "lesson_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "content",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "state",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "version",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": "0",
+          "orm_default": "0"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (lesson_id) → review_lessons.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "uq_review_student_lesson",
+          "definition": "UNIQUE (school_id, student_id, lesson_id)"
+        }
+      ],
+      "indexes": []
+    },
+    {
+      "name": "review_attempts",
+      "purpose": "Persisted answer evidence, assessment score, assistance and error taxonomy.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "session_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "lesson_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "request_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "question_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "concept_ref",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "response_text",
+          "type": "TEXT",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "option_id",
+          "type": "VARCHAR(100)",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "correctness_score",
+          "type": "FLOAT",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "error_type",
+          "type": "VARCHAR(100)",
+          "nullable": true,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "hint_level",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "assisted",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "attempt_number",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "locale",
+          "type": "VARCHAR(2)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "ck_review_attempt_error_type",
+          "definition": "CHECK error_type IS NULL OR error_type IN ('force_pair_unequal_magnitude', 'force_pair_missing_reaction', 'force_pair_incomplete_distinct_objects', 'force_pair_missing_distinct_objects', 'balanced_force_means_stopped', 'kinetic_energy_requires_motion', 'equivalent_fraction_denominator_only')"
+        },
+        {
+          "name": "ck_review_attempt_hint_level",
+          "definition": "CHECK hint_level >= 0"
+        },
+        {
+          "name": "ck_review_attempt_number",
+          "definition": "CHECK attempt_number >= 1"
+        },
+        {
+          "name": "ck_review_attempt_score",
+          "definition": "CHECK correctness_score >= 0 AND correctness_score <= 1"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (session_id) → review_sessions.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (lesson_id) → review_lessons.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "uq_review_attempt_session_request",
+          "definition": "UNIQUE (session_id, request_id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_review_attempts_school_id",
+          "definition": "INDEX (school_id)"
+        },
+        {
+          "name": "ix_review_attempts_session_id",
+          "definition": "INDEX (session_id)"
+        },
+        {
+          "name": "ix_review_attempts_student_id",
+          "definition": "INDEX (student_id)"
+        }
+      ]
+    },
+    {
+      "name": "review_session_summaries",
+      "purpose": "One immutable application-level completion snapshot per session; localized at read time.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "PK"
+          ],
+          "database_default": null,
+          "orm_default": "uuid4()"
+        },
+        {
+          "name": "school_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "student_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "session_id",
+          "type": "UUID",
+          "nullable": false,
+          "keys": [
+            "FK",
+            "UK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "lesson_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "keys": [
+            "FK"
+          ],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "concepts",
+          "type": "JSON",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "total_attempts",
+          "type": "INTEGER",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "calculation_version",
+          "type": "VARCHAR(20)",
+          "nullable": false,
+          "keys": [],
+          "database_default": null,
+          "orm_default": null
+        },
+        {
+          "name": "completed_at",
+          "type": "TIMESTAMP WITH TIME ZONE",
+          "nullable": false,
+          "keys": [],
+          "database_default": "now()",
+          "orm_default": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "ck_review_summary_attempts",
+          "definition": "CHECK total_attempts >= 1"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (school_id) → schools.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (lesson_id) → review_lessons.id; ON DELETE NO ACTION"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (student_id) → users.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "FK (session_id) → review_sessions.id; ON DELETE CASCADE"
+        },
+        {
+          "name": "unnamed",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "uq_review_summary_session",
+          "definition": "UNIQUE (session_id)"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_review_session_summaries_school_id",
+          "definition": "INDEX (school_id)"
+        },
+        {
+          "name": "ix_review_session_summaries_student_id",
+          "definition": "INDEX (student_id)"
+        }
+      ]
+    }
+  ]
+}
