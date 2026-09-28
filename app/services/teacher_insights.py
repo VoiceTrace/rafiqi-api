@@ -359,7 +359,7 @@ def _session_concepts(summary: ReviewSessionSummary, content: dict, locale: Loca
         ReviewConceptOutcome(
             concept_ref=item["concept_ref"],
             title=_concept_title(content, locale, item["concept_ref"]),
-            outcome=item["outcome"],
+            outcome=item.get("mastery_band", item.get("outcome")),
             completed_with_support=bool(item.get("completed_with_support", False)),
         )
         for item in summary.concepts

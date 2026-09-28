@@ -81,7 +81,7 @@ async def add_review(db, school, student, lesson_id: str, score: float, assisted
         ),
         ReviewSessionSummary(
             school_id=school.id, student_id=student.id, session_id=session.id, lesson_id=lesson.id,
-            concepts=[{"concept_ref": concept, "outcome": band, "completed_with_support": assisted}],
+            concepts=[{"concept_ref": concept, "mastery_band": band, "completed_with_support": assisted}],
             total_attempts=attempts, calculation_version="mvp-v1", completed_at=completed_at,
         ),
     ])

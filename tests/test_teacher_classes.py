@@ -233,7 +233,7 @@ async def test_class_and_student_mastery_use_latest_filtered_evidence(class_api)
                 concepts=[
                     {
                         "concept_ref": "action-reaction",
-                        "outcome": "developing",
+                        "mastery_band": "developing",
                         "completed_with_support": True,
                     }
                 ],
