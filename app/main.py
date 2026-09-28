@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, users, review
+from app.api.routes import auth, classes, teacher_insights, users, review
 from app.core.config import settings
 
 description = """
@@ -125,6 +125,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(review.router)
+app.include_router(classes.router)
+app.include_router(teacher_insights.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
