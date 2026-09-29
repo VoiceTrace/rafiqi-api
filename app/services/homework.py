@@ -173,6 +173,7 @@ async def create_assignment(
         id=a.id,
         school_id=a.school_id,
         teacher_id=a.teacher_id,
+        grade_level=a.grade_level,
         subject=a.subject,
         chapter=a.chapter,
         lesson_id=a.lesson_id,
