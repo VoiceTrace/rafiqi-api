@@ -46,7 +46,7 @@ async def homework_api():
                 ("foreign", "student", schools[1], True),
                 ("foreign_teacher", "teacher", schools[1], True),
             ]:
-                user = User(school_id=school.id, role=role, is_active=active,
+                user = User(school_id=school.id, role=role, is_active=active, grade_level="Grade 10" if key in {"student", "peer"} else "Grade 11",
                             email=f"{uuid.uuid4()}@example.test", full_name=key,
                             hashed_password="unused-in-token-auth-test")
                 db.add(user)
@@ -73,7 +73,7 @@ async def homework_api():
 async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     client, db, users, tokens = homework_api
     teacher = tokens["teacher"]
-    payload = {"lesson_id": "homework-regression", "title": "Regression quiz"}
+    payload = {"grade_level": "Grade 10", "subject": "Physics", "chapter": "Forces", "lesson_id": "homework-regression", "title": "Regression quiz"}
     wrong_role = await client.post("/homework/assignments", headers=tokens["student"], json=payload)
     assert wrong_role.status_code == 403
     created = await client.post("/homework/assignments", headers=teacher, json=payload)
@@ -87,15 +87,7 @@ async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     })
     assert question.status_code == 201, question.text
     question_id = question.json()["id"]
-    for rejected in ["foreign", "teacher", "inactive"]:
-        distribution = await client.post(path + "/distribute", headers=teacher, json={
-            "student_ids": [str(users["student"].id), str(users[rejected].id)],
-        })
-        assert distribution.status_code == 400, distribution.text
-        assert (await client.get(path, headers=teacher)).json()["status"] == "draft"
-    distributed = await client.post(path + "/distribute", headers=teacher, json={
-        "student_ids": [str(users["student"].id)],
-    })
+    distributed = await client.post(path + "/distribute", headers=teacher, json={})
     assert distributed.status_code == 200, distributed.text
     assert (await client.patch(path, headers=teacher, json={"title": "Changed"})).status_code == 409
     assignments = await client.get("/homework/me/assignments", headers=tokens["student"])
@@ -107,34 +99,33 @@ async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     quiz = await client.get(student_path, headers=tokens["student"])
     assert quiz.status_code == 200
     assert "correct_answer" not in quiz.text
-    assert quiz.json()["questions"][0]["hints"] == ["Count the first group.", "Add two and two.", "Choose the total of four."]
+    assert "hints" not in quiz.json()["questions"][0]
+    for expected_index in range(3):
+        reveal = await client.post(student_path + f"/questions/{question_id}/hints/reveal", headers=tokens["student"])
+        assert reveal.status_code == 200 and reveal.json()["hint_index"] == expected_index
+    assert (await client.post(student_path + f"/questions/{question_id}/hints/reveal", headers=tokens["student"])).status_code == 409
     hidden = await client.get(student_path + "/results", headers=tokens["student"])
     assert hidden.status_code == 409
     assert "correct_answer" not in hidden.text
     invalid = await client.post(student_path + "/submit", headers=tokens["student"], json={
-        "answers": [{"question_id": question_id, "selected_option": "z"}],
+        "answers": [{"question_id": question_id, "answer": "z"}],
     })
     assert invalid.status_code == 400, invalid.text
-    answer = {"answers": [{"question_id": question_id, "selected_option": "b"}]}
+    answer = {"answers": [{"question_id": question_id, "answer": "b"}]}
     submitted = await client.post(student_path + "/submit", headers=tokens["student"], json=answer)
     assert submitted.status_code == 200, submitted.text
-    assert submitted.json()["score"] == 1
-    assert submitted.json()["results"][0]["correct_answer"] == "b"
+    assert submitted.json()["status"] == "submitted"
+    assert submitted.json()["score"] is None
     saved = await client.get(student_path + "/results", headers=tokens["student"])
-    assert saved.status_code == 200
-    assert saved.json() == submitted.json()
+    assert saved.status_code == 409
     assert (await client.get(student_path + "/results", headers=tokens["foreign"])).status_code == 404
     assert (await client.get(student_path + "/results", headers=tokens["peer"])).status_code == 403
     assert (await client.get(student_path + "/results", headers=teacher)).status_code == 403
-    assert "correct_answer" not in (await client.get(student_path, headers=tokens["student"])).text
+    submissions = await client.get(path + "/submissions", headers=teacher)
+    assert submissions.status_code == 200 and submissions.json()[0]["attempts"][0]["hints_revealed"] == 3
+    graded = await client.post(path + f"/submissions/{received['id']}/grade", headers=teacher, json={"grades": [{"question_id": question_id, "score": 1, "comment": "Good work"}], "approve": True})
+    assert graded.status_code == 200 and graded.json()["status"] == "approved"
+    saved = await client.get(student_path + "/results", headers=tokens["student"])
+    assert saved.status_code == 200 and saved.json()["score"] == 1
     repeated = await client.post(student_path + "/submit", headers=tokens["student"], json=answer)
     assert repeated.status_code == 409
-    mastery = (await db.execute(select(MasteryRecord).where(
-        MasteryRecord.school_id == users["student"].school_id,
-        MasteryRecord.student_id == users["student"].id,
-        MasteryRecord.lesson_id == payload["lesson_id"],
-    ))).scalar_one()
-    assert mastery.attempt_count == 1
-    assert mastery.correct_count == 1
-    assert mastery.mastery_level == 1
-    assert mastery.last_attempt_at is not None

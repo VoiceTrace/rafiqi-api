@@ -1354,6 +1354,126 @@
         }
       }
     },
+    "/homework/assignments/{assignment_id}/submissions": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "List student submissions and recorded hint use for manual review",
+        "operationId": "list_assignment_submissions_homework_assignments__assignment_id__submissions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TeacherSubmissionRead"
+                  },
+                  "title": "Response List Assignment Submissions Homework Assignments  Assignment Id  Submissions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homework/assignments/{assignment_id}/submissions/{student_assignment_id}/grade": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Manually grade every answer and optionally approve the submission",
+        "operationId": "grade_assignment_submission_homework_assignments__assignment_id__submissions__student_assignment_id__grade_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Assignment Id"
+            }
+          },
+          {
+            "name": "student_assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Student Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradeSubmissionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherSubmissionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/homework/assignments/{assignment_id}": {
       "get": {
         "tags": [
@@ -1856,6 +1976,64 @@
         }
       }
     },
+    "/homework/me/assignments/{student_assignment_id}/questions/{question_id}/hints/reveal": {
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Reveal the next teacher-authored hint, up to three per question",
+        "operationId": "reveal_my_hint_homework_me_assignments__student_assignment_id__questions__question_id__hints_reveal_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Student Assignment Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintRevealRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/homework/me/assignments/{student_assignment_id}/results": {
       "get": {
         "tags": [
@@ -1909,7 +2087,7 @@
         "tags": [
           "homework"
         ],
-        "summary": "Submit homework \u2014 reveals correct answers in response (E5)",
+        "summary": "Submit homework for manual grading",
         "operationId": "submit_homework_homework_me_assignments__student_assignment_id__submit_post",
         "security": [
           {
@@ -1992,19 +2170,34 @@
             "minLength": 1,
             "title": "Question Text"
           },
+          "format": {
+            "type": "string",
+            "enum": [
+              "mcq",
+              "short_note"
+            ],
+            "title": "Format",
+            "default": "mcq"
+          },
           "options": {
             "items": {
               "$ref": "#/components/schemas/MCQOption"
             },
             "type": "array",
             "maxItems": 6,
-            "minItems": 2,
             "title": "Options"
           },
           "correct_answer": {
-            "type": "string",
-            "maxLength": 10,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Correct Answer"
           },
           "hints": {
@@ -2013,7 +2206,6 @@
             },
             "type": "array",
             "maxItems": 3,
-            "minItems": 3,
             "title": "Hints"
           },
           "concept_ref": {
@@ -2037,10 +2229,7 @@
         },
         "type": "object",
         "required": [
-          "question_text",
-          "options",
-          "correct_answer",
-          "hints"
+          "question_text"
         ],
         "title": "AddQuestionRequest"
       },
@@ -2065,17 +2254,17 @@
             "format": "uuid",
             "title": "Question Id"
           },
-          "selected_option": {
+          "answer": {
             "type": "string",
-            "maxLength": 10,
+            "maxLength": 5000,
             "minLength": 1,
-            "title": "Selected Option"
+            "title": "Answer"
           }
         },
         "type": "object",
         "required": [
           "question_id",
-          "selected_option"
+          "answer"
         ],
         "title": "AnswerInput"
       },
@@ -2095,6 +2284,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Teacher Id"
+          },
+          "grade_level": {
+            "type": "string",
+            "title": "Grade Level"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "title": "Chapter"
           },
           "lesson_id": {
             "type": "string",
@@ -2152,6 +2353,9 @@
           "id",
           "school_id",
           "teacher_id",
+          "grade_level",
+          "subject",
+          "chapter",
           "lesson_id",
           "title",
           "description",
@@ -2178,6 +2382,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Teacher Id"
+          },
+          "grade_level": {
+            "type": "string",
+            "title": "Grade Level"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "title": "Chapter"
           },
           "lesson_id": {
             "type": "string",
@@ -2242,6 +2458,9 @@
           "id",
           "school_id",
           "teacher_id",
+          "grade_level",
+          "subject",
+          "chapter",
           "lesson_id",
           "title",
           "description",
@@ -2364,6 +2583,24 @@
       },
       "CreateAssignmentRequest": {
         "properties": {
+          "grade_level": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Grade Level"
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Chapter"
+          },
           "lesson_id": {
             "type": "string",
             "maxLength": 100,
@@ -2402,6 +2639,9 @@
         },
         "type": "object",
         "required": [
+          "grade_level",
+          "subject",
+          "chapter",
           "lesson_id",
           "title"
         ],
@@ -2424,15 +2664,6 @@
       },
       "DistributeRequest": {
         "properties": {
-          "student_ids": {
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Student Ids"
-          },
           "due_at": {
             "anyOf": [
               {
@@ -2447,9 +2678,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "student_ids"
-        ],
         "title": "DistributeRequest"
       },
       "ExplainRequest": {
@@ -2545,6 +2773,61 @@
         ],
         "title": "GapDigestRead"
       },
+      "GradeAnswerInput": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "score"
+        ],
+        "title": "GradeAnswerInput"
+      },
+      "GradeSubmissionRequest": {
+        "properties": {
+          "grades": {
+            "items": {
+              "$ref": "#/components/schemas/GradeAnswerInput"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Grades"
+          },
+          "approve": {
+            "type": "boolean",
+            "title": "Approve",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "grades"
+        ],
+        "title": "GradeSubmissionRequest"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2557,6 +2840,30 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HintRevealRead": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "hint_index": {
+            "type": "integer",
+            "title": "Hint Index"
+          },
+          "hint": {
+            "type": "string",
+            "title": "Hint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "hint_index",
+          "hint"
+        ],
+        "title": "HintRevealRead"
       },
       "LoginRequest": {
         "properties": {
@@ -2757,6 +3064,10 @@
           },
           "format": {
             "type": "string",
+            "enum": [
+              "mcq",
+              "short_note"
+            ],
             "title": "Format"
           },
           "options": {
@@ -2765,6 +3076,17 @@
             },
             "type": "array",
             "title": "Options"
+          },
+          "correct_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Answer"
           },
           "concept_ref": {
             "anyOf": [
@@ -2787,10 +3109,6 @@
           "order": {
             "type": "integer",
             "title": "Order"
-          },
-          "correct_answer": {
-            "type": "string",
-            "title": "Correct Answer"
           }
         },
         "type": "object",
@@ -2800,13 +3118,12 @@
           "question_text",
           "format",
           "options",
+          "correct_answer",
           "concept_ref",
           "hints",
-          "order",
-          "correct_answer"
+          "order"
         ],
-        "title": "QuestionReadTeacher",
-        "description": "Teacher-only view: includes correct_answer."
+        "title": "QuestionReadTeacher"
       },
       "RefreshRequest": {
         "properties": {
@@ -3042,6 +3359,18 @@
             "format": "uuid",
             "title": "Assignment Id"
           },
+          "grade_level": {
+            "type": "string",
+            "title": "Grade Level"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "title": "Chapter"
+          },
           "lesson_id": {
             "type": "string",
             "title": "Lesson Id"
@@ -3110,6 +3439,9 @@
         "required": [
           "id",
           "assignment_id",
+          "grade_level",
+          "subject",
+          "chapter",
           "lesson_id",
           "title",
           "description",
@@ -3131,6 +3463,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Assignment Id"
+          },
+          "grade_level": {
+            "type": "string",
+            "title": "Grade Level"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "chapter": {
+            "type": "string",
+            "title": "Chapter"
           },
           "lesson_id": {
             "type": "string",
@@ -3207,6 +3551,9 @@
         "required": [
           "id",
           "assignment_id",
+          "grade_level",
+          "subject",
+          "chapter",
           "lesson_id",
           "title",
           "description",
@@ -3216,8 +3563,7 @@
           "submitted_at",
           "questions"
         ],
-        "title": "StudentAssignmentWithQuestions",
-        "description": "Student view: questions WITHOUT correct_answer."
+        "title": "StudentAssignmentWithQuestions"
       },
       "SubmissionResult": {
         "properties": {
@@ -3226,17 +3572,20 @@
             "format": "uuid",
             "title": "Student Assignment Id"
           },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "score": {
-            "type": "number",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Score"
-          },
-          "correct_count": {
-            "type": "integer",
-            "title": "Correct Count"
-          },
-          "total_count": {
-            "type": "integer",
-            "title": "Total Count"
           },
           "results": {
             "items": {
@@ -3249,10 +3598,7 @@
         "type": "object",
         "required": [
           "student_assignment_id",
-          "score",
-          "correct_count",
-          "total_count",
-          "results"
+          "status"
         ],
         "title": "SubmissionResult"
       },
@@ -3287,6 +3633,156 @@
           "answers"
         ],
         "title": "SubmitHomeworkRequest"
+      },
+      "TeacherAttemptRead": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "question_text": {
+            "type": "string",
+            "title": "Question Text"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "mcq",
+              "short_note"
+            ],
+            "title": "Format"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "correct_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Answer"
+          },
+          "hints_revealed": {
+            "type": "integer",
+            "title": "Hints Revealed"
+          },
+          "teacher_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Score"
+          },
+          "teacher_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Comment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "question_text",
+          "format",
+          "answer",
+          "correct_answer",
+          "hints_revealed",
+          "teacher_score",
+          "teacher_comment"
+        ],
+        "title": "TeacherAttemptRead"
+      },
+      "TeacherSubmissionRead": {
+        "properties": {
+          "student_assignment_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Assignment Id"
+          },
+          "student_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Student Id"
+          },
+          "student_name": {
+            "type": "string",
+            "title": "Student Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherAttemptRead"
+            },
+            "type": "array",
+            "title": "Attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_assignment_id",
+          "student_id",
+          "student_name",
+          "status",
+          "score",
+          "submitted_at",
+          "approved_at",
+          "attempts"
+        ],
+        "title": "TeacherSubmissionRead"
       },
       "TokenResponse": {
         "properties": {
@@ -3331,6 +3827,58 @@
       },
       "UpdateAssignmentRequest": {
         "properties": {
+          "grade_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Level"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "chapter": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
           "title": {
             "anyOf": [
               {
@@ -3385,6 +3933,21 @@
             ],
             "title": "Question Text"
           },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "mcq",
+                  "short_note"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
           "options": {
             "anyOf": [
               {
@@ -3392,8 +3955,7 @@
                   "$ref": "#/components/schemas/MCQOption"
                 },
                 "type": "array",
-                "maxItems": 6,
-                "minItems": 2
+                "maxItems": 6
               },
               {
                 "type": "null"
@@ -3421,8 +3983,7 @@
                   "type": "string"
                 },
                 "type": "array",
-                "maxItems": 3,
-                "minItems": 3
+                "maxItems": 3
               },
               {
                 "type": "null"
@@ -3495,6 +4056,19 @@
             "examples": [
               "securepass123"
             ]
+          },
+          "grade_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Level"
           }
         },
         "type": "object",
@@ -3541,6 +4115,17 @@
             "type": "string",
             "title": "Role"
           },
+          "grade_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Level"
+          },
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
@@ -3574,6 +4159,7 @@
           "email",
           "full_name",
           "role",
+          "grade_level",
           "is_active",
           "avatar_url",
           "created_at",
@@ -3638,6 +4224,19 @@
               }
             ],
             "title": "Is Active"
+          },
+          "grade_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Level"
           }
         },
         "type": "object",
@@ -3691,30 +4290,37 @@
             "format": "uuid",
             "title": "Question Id"
           },
-          "selected_option": {
+          "answer": {
             "type": "string",
-            "title": "Selected Option"
+            "title": "Answer"
           },
-          "is_correct": {
-            "type": "boolean",
-            "title": "Is Correct"
+          "teacher_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Score"
           },
-          "correctness_score": {
-            "type": "number",
-            "title": "Correctness Score"
-          },
-          "correct_answer": {
-            "type": "string",
-            "title": "Correct Answer"
+          "teacher_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Comment"
           }
         },
         "type": "object",
         "required": [
           "question_id",
-          "selected_option",
-          "is_correct",
-          "correctness_score",
-          "correct_answer"
+          "answer"
         ],
         "title": "AttemptResult"
       },
@@ -3736,6 +4342,10 @@
           },
           "format": {
             "type": "string",
+            "enum": [
+              "mcq",
+              "short_note"
+            ],
             "title": "Format"
           },
           "options": {
@@ -3756,12 +4366,14 @@
             ],
             "title": "Concept Ref"
           },
-          "hints": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Hints"
+          "hint_count": {
+            "type": "integer",
+            "title": "Hint Count"
+          },
+          "revealed_hint_count": {
+            "type": "integer",
+            "title": "Revealed Hint Count",
+            "default": 0
           },
           "order": {
             "type": "integer",
@@ -3776,7 +4388,7 @@
           "format",
           "options",
           "concept_ref",
-          "hints",
+          "hint_count",
           "order"
         ],
         "title": "QuestionRead"

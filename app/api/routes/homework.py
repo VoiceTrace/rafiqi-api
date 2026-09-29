@@ -17,10 +17,13 @@ from app.schemas.homework import (
     CreateAssignmentRequest,
     DistributeRequest,
     GapDigestRead,
+    GradeSubmissionRequest,
+    HintRevealRead,
     QuestionReadTeacher,
     StudentAssignmentRead,
     StudentAssignmentWithQuestions,
     SubmissionResult,
+    TeacherSubmissionRead,
     SubmitHomeworkRequest,
     UpdateAssignmentRequest,
     UpdateQuestionRequest,
@@ -48,6 +51,36 @@ async def create_assignment(
         teacher_id=current_user.id,
         school_id=current_user.school_id,
         req=body,
+    )
+
+
+@router.get(
+    "/assignments/{assignment_id}/submissions",
+    response_model=list[TeacherSubmissionRead],
+    summary="List student submissions and recorded hint use for manual review",
+)
+async def list_assignment_submissions(
+    assignment_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_teacher)],
+    db: AsyncSession = Depends(get_db_session),
+) -> list[TeacherSubmissionRead]:
+    return await svc.list_submissions(db, current_user.id, current_user.school_id, assignment_id)
+
+
+@router.post(
+    "/assignments/{assignment_id}/submissions/{student_assignment_id}/grade",
+    response_model=TeacherSubmissionRead,
+    summary="Manually grade every answer and optionally approve the submission",
+)
+async def grade_assignment_submission(
+    assignment_id: uuid.UUID,
+    student_assignment_id: uuid.UUID,
+    body: GradeSubmissionRequest,
+    current_user: Annotated[CurrentUser, Depends(require_teacher)],
+    db: AsyncSession = Depends(get_db_session),
+) -> TeacherSubmissionRead:
+    return await svc.grade_submission(
+        db, current_user.id, current_user.school_id, assignment_id, student_assignment_id, body,
     )
 
 
@@ -268,6 +301,20 @@ async def get_my_assignment(
     )
 
 
+@router.post(
+    "/me/assignments/{student_assignment_id}/questions/{question_id}/hints/reveal",
+    response_model=HintRevealRead,
+    summary="Reveal the next teacher-authored hint, up to three per question",
+)
+async def reveal_my_hint(
+    student_assignment_id: uuid.UUID,
+    question_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_student)],
+    db: AsyncSession = Depends(get_db_session),
+) -> HintRevealRead:
+    return await svc.reveal_hint(db, current_user.id, current_user.school_id, student_assignment_id, question_id)
+
+
 # ── Student: submit ───────────────────────────────────────────────────────────
 
 @router.get(
@@ -288,7 +335,7 @@ async def get_my_results(
 @router.post(
     "/me/assignments/{student_assignment_id}/submit",
     response_model=SubmissionResult,
-    summary="Submit homework — reveals correct answers in response (E5)",
+    summary="Submit homework for manual grading",
 )
 async def submit_homework(
     student_assignment_id: uuid.UUID,

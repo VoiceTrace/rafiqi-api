@@ -83,6 +83,7 @@ async def create_user(school_id: uuid.UUID, data: UserCreate, db: AsyncSession) 
         email=data.email,
         full_name=data.full_name,
         role=data.role,
+        grade_level=data.grade_level if data.role == "student" else None,
         hashed_password=hash_password(data.password),
     )
     db.add(user)
@@ -102,6 +103,8 @@ async def update_user(
         user.full_name = data.full_name
     if data.is_active is not None:
         user.is_active = data.is_active
+    if "grade_level" in data.model_fields_set:
+        user.grade_level = data.grade_level
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(user)

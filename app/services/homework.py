@@ -23,6 +23,7 @@ from app.models.homework import (
     AssignmentStatus,
     HomeworkAssignment,
     HomeworkAttempt,
+    HomeworkHintReveal,
     HomeworkQuestion,
     StudentAssignment,
     StudentAssignmentStatus,
@@ -37,13 +38,17 @@ from app.schemas.homework import (
     ConceptGap,
     CreateAssignmentRequest,
     DistributeRequest,
+    GradeSubmissionRequest,
     GapDigestRead,
     MCQOption,
+    HintRevealRead,
     QuestionRead,
     QuestionReadTeacher,
     StudentAssignmentRead,
     StudentAssignmentWithQuestions,
     SubmissionResult,
+    TeacherAttemptRead,
+    TeacherSubmissionRead,
     UpdateAssignmentRequest,
     UpdateQuestionRequest,
 )
@@ -88,6 +93,9 @@ def _assignment_to_read(a: HomeworkAssignment, question_count: int | None = None
         id=a.id,
         school_id=a.school_id,
         teacher_id=a.teacher_id,
+        grade_level=a.grade_level,
+        subject=a.subject,
+        chapter=a.chapter,
         lesson_id=a.lesson_id,
         title=a.title,
         description=a.description,
@@ -113,7 +121,7 @@ def _question_to_teacher_read(q: HomeworkQuestion) -> QuestionReadTeacher:
     )
 
 
-def _question_to_student_read(q: HomeworkQuestion) -> QuestionRead:
+def _question_to_student_read(q: HomeworkQuestion, revealed_hint_count: int = 0) -> QuestionRead:
     return QuestionRead(
         id=q.id,
         assignment_id=q.assignment_id,
@@ -121,7 +129,8 @@ def _question_to_student_read(q: HomeworkQuestion) -> QuestionRead:
         format=q.format,
         options=[MCQOption(id=o["id"], text=o["text"]) for o in q.options],
         concept_ref=q.concept_ref,
-        hints=q.hints,
+        hint_count=len(q.hints),
+        revealed_hint_count=revealed_hint_count,
         order=q.order,
     )
 
@@ -145,6 +154,9 @@ async def create_assignment(
     a = HomeworkAssignment(
         school_id=school_id,
         teacher_id=teacher_id,
+        grade_level=req.grade_level,
+        subject=req.subject,
+        chapter=req.chapter,
         lesson_id=req.lesson_id,
         title=req.title,
         description=req.description,
@@ -161,6 +173,8 @@ async def create_assignment(
         id=a.id,
         school_id=a.school_id,
         teacher_id=a.teacher_id,
+        subject=a.subject,
+        chapter=a.chapter,
         lesson_id=a.lesson_id,
         title=a.title,
         description=a.description,
@@ -240,6 +254,14 @@ async def update_assignment(
         raise _forbidden()
     if a.status != AssignmentStatus.draft:
         raise _conflict("Only draft assignments can be edited")
+    if req.subject is not None:
+        a.subject = req.subject
+    if req.grade_level is not None:
+        a.grade_level = req.grade_level
+    if req.chapter is not None:
+        a.chapter = req.chapter
+    if req.lesson_id is not None:
+        a.lesson_id = req.lesson_id
     if req.title is not None:
         a.title = req.title
     if "description" in req.model_fields_set:
@@ -311,15 +333,11 @@ async def add_question(
     a = await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id, lock=True)
     if a.status != AssignmentStatus.draft:
         raise _conflict("Only draft assignments can have questions added")
-    # validate correct_answer is one of the option ids
-    option_ids = {o.id for o in req.options}
-    if req.correct_answer not in option_ids:
-        raise _bad_request("correct_answer must match one of the option ids")
     q = HomeworkQuestion(
         school_id=school_id,
         assignment_id=assignment_id,
         question_text=req.question_text,
-        format="mcq",
+        format=req.format,
         options=[o.model_dump() for o in req.options],
         correct_answer=req.correct_answer,
         hints=req.hints,
@@ -354,14 +372,27 @@ async def update_question(
     if q is None:
         raise _not_found("Question not found")
     # Validate the merged question before mutation, including options-only patches.
+    question_format = req.format if req.format is not None else q.format
     options = [o.model_dump() for o in req.options] if req.options is not None else q.options
     correct_answer = req.correct_answer if req.correct_answer is not None else q.correct_answer
-    if correct_answer not in {o["id"] for o in options}:
-        raise _bad_request("correct_answer must match one of the option ids")
+    try:
+        AddQuestionRequest(
+            question_text=req.question_text or q.question_text,
+            format=question_format,
+            options=[MCQOption(**option) for option in options],
+            correct_answer=correct_answer,
+            hints=req.hints if req.hints is not None else q.hints,
+            concept_ref=req.concept_ref if "concept_ref" in req.model_fields_set else q.concept_ref,
+            order=req.order if req.order is not None else q.order,
+        )
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
     if req.question_text is not None:
         q.question_text = req.question_text
     if req.options is not None:
         q.options = options
+    if req.format is not None:
+        q.format = req.format
     if req.correct_answer is not None:
         q.correct_answer = req.correct_answer
     if req.hints is not None:
@@ -412,17 +443,18 @@ async def distribute_assignment(
         raise _conflict("Only draft assignments can be distributed")
     if not a.questions:
         raise _conflict("Cannot distribute an assignment with no questions")
-    if any(len(question.hints) != 3 for question in a.questions):
-        raise _conflict("Each question must have exactly 3 hints before distribution")
+    if any(len(question.hints) > 3 for question in a.questions):
+        raise _conflict("Questions can have at most 3 hints")
 
     recipients = await db.execute(select(User.id).where(
         User.school_id == school_id,
         User.role == UserRole.STUDENT,
         User.is_active.is_(True),
-        User.id.in_(req.student_ids),
+        User.grade_level == a.grade_level,
     ))
-    if set(recipients.scalars().all()) != set(req.student_ids):
-        raise _bad_request("Recipients must be active students in your school")
+    recipient_ids = recipients.scalars().all()
+    if not recipient_ids:
+        raise _conflict("There are no active students in this grade")
 
     if req.due_at:
         a.due_at = req.due_at
@@ -442,7 +474,7 @@ async def distribute_assignment(
     #         # fall back to teacher-created questions
     #         pass
 
-    for student_id in req.student_ids:
+    for student_id in recipient_ids:
         sa = StudentAssignment(
             school_id=school_id,
             student_id=student_id,
@@ -457,6 +489,76 @@ async def distribute_assignment(
     await db.commit()
     await db.refresh(a)
     return _assignment_to_read(a, question_count=q_count)
+
+
+def _teacher_submission_read(sa: StudentAssignment, student: User) -> TeacherSubmissionRead:
+    revealed_by_question: dict[uuid.UUID, int] = {}
+    for reveal in sa.hint_reveals:
+        revealed_by_question[reveal.question_id] = revealed_by_question.get(reveal.question_id, 0) + 1
+    attempts = sorted(sa.attempts, key=lambda attempt: (attempt.question.order, str(attempt.question_id)))
+    return TeacherSubmissionRead(
+        student_assignment_id=sa.id, student_id=sa.student_id, student_name=student.full_name,
+        status=sa.status, score=sa.score, submitted_at=sa.submitted_at, approved_at=sa.approved_at,
+        attempts=[TeacherAttemptRead(
+            question_id=attempt.question_id, question_text=attempt.question.question_text,
+            format=attempt.question.format, answer=attempt.student_answer,
+            correct_answer=attempt.question.correct_answer,
+            hints_revealed=revealed_by_question.get(attempt.question_id, 0),
+            teacher_score=attempt.teacher_score, teacher_comment=attempt.teacher_comment,
+        ) for attempt in attempts],
+    )
+
+
+async def list_submissions(
+    db: AsyncSession, teacher_id: uuid.UUID, school_id: uuid.UUID, assignment_id: uuid.UUID,
+) -> list[TeacherSubmissionRead]:
+    await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
+    result = await db.execute(
+        select(StudentAssignment, User).join(User, User.id == StudentAssignment.student_id).where(
+            StudentAssignment.assignment_id == assignment_id, StudentAssignment.school_id == school_id,
+        ).options(
+            selectinload(StudentAssignment.attempts).selectinload(HomeworkAttempt.question),
+            selectinload(StudentAssignment.hint_reveals),
+        ).order_by(User.full_name)
+    )
+    return [_teacher_submission_read(sa, student) for sa, student in result.all()]
+
+
+async def grade_submission(
+    db: AsyncSession, teacher_id: uuid.UUID, school_id: uuid.UUID, assignment_id: uuid.UUID,
+    student_assignment_id: uuid.UUID, req: GradeSubmissionRequest,
+) -> TeacherSubmissionRead:
+    await _load_assignment_for_teacher(db, teacher_id, school_id, assignment_id)
+    result = await db.execute(
+        select(StudentAssignment, User).join(User, User.id == StudentAssignment.student_id).where(
+            StudentAssignment.id == student_assignment_id,
+            StudentAssignment.assignment_id == assignment_id,
+            StudentAssignment.school_id == school_id,
+        ).options(
+            selectinload(StudentAssignment.attempts).selectinload(HomeworkAttempt.question),
+            selectinload(StudentAssignment.hint_reveals),
+        ).with_for_update()
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise _not_found("Submission not found")
+    sa, student = row
+    if sa.status not in {StudentAssignmentStatus.submitted, StudentAssignmentStatus.graded, StudentAssignmentStatus.approved}:
+        raise _conflict("Only submitted homework can be graded")
+    attempt_by_question = {attempt.question_id: attempt for attempt in sa.attempts}
+    grades_by_question = {grade.question_id: grade for grade in req.grades}
+    if set(grades_by_question) != set(attempt_by_question):
+        raise _bad_request("Grades must cover every submitted answer")
+    for question_id, grade in grades_by_question.items():
+        attempt = attempt_by_question[question_id]
+        attempt.teacher_score = grade.score
+        attempt.teacher_comment = grade.comment
+        attempt.correctness_score = grade.score
+    sa.score = sum(grade.score for grade in req.grades) / len(req.grades)
+    sa.status = StudentAssignmentStatus.approved if req.approve else StudentAssignmentStatus.graded
+    sa.approved_at = datetime.now(tz=timezone.utc) if req.approve else None
+    await db.commit()
+    return _teacher_submission_read(sa, student)
 
 
 # ── Teacher: gap digest (E2) ──────────────────────────────────────────────────
@@ -556,6 +658,9 @@ async def list_student_assignments(
         out.append(StudentAssignmentRead(
             id=sa.id,
             assignment_id=a.id,
+            grade_level=a.grade_level,
+            subject=a.subject,
+            chapter=a.chapter,
             lesson_id=a.lesson_id,
             title=a.title,
             description=a.description,
@@ -581,7 +686,8 @@ async def get_student_assignment(
             StudentAssignment.school_id == school_id,
         )
         .options(
-            selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions)
+            selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions),
+            selectinload(StudentAssignment.hint_reveals),
         )
     )
     result = await db.execute(stmt)
@@ -594,6 +700,9 @@ async def get_student_assignment(
     return StudentAssignmentWithQuestions(
         id=sa.id,
         assignment_id=a.id,
+        grade_level=a.grade_level,
+        subject=a.subject,
+        chapter=a.chapter,
         lesson_id=a.lesson_id,
         title=a.title,
         description=a.description,
@@ -602,132 +711,101 @@ async def get_student_assignment(
         due_at=a.due_at,
         submitted_at=sa.submitted_at,
         question_count=len(a.questions),
-        questions=[_question_to_student_read(q) for q in a.questions],
+        questions=[_question_to_student_read(q, sum(reveal.question_id == q.id for reveal in sa.hint_reveals)) for q in a.questions],
     )
 
 
-# ── Student: submit (E5) ──────────────────────────────────────────────────────
+# ── Student: progressive hints, submit, and approved results ─────────────────
 
-async def get_submission_result(
-    db: AsyncSession,
-    student_id: uuid.UUID,
-    school_id: uuid.UUID,
-    student_assignment_id: uuid.UUID,
-) -> SubmissionResult:
-    """Restore feedback for the owner, only after a committed submission."""
+async def reveal_hint(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID,
+    student_assignment_id: uuid.UUID, question_id: uuid.UUID,
+) -> HintRevealRead:
     result = await db.execute(
-        select(StudentAssignment)
-        .where(StudentAssignment.id == student_assignment_id,
-               StudentAssignment.school_id == school_id)
-        .options(selectinload(StudentAssignment.attempts).selectinload(HomeworkAttempt.question))
+        select(StudentAssignment).where(
+            StudentAssignment.id == student_assignment_id, StudentAssignment.school_id == school_id,
+        ).options(selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions)).with_for_update()
     )
     sa = result.scalar_one_or_none()
     if sa is None:
         raise _not_found("Assignment not found")
     if sa.student_id != student_id:
         raise _forbidden()
-    if sa.status != StudentAssignmentStatus.submitted:
-        raise _conflict("Results are available after submission")
+    if sa.status in {StudentAssignmentStatus.submitted, StudentAssignmentStatus.graded, StudentAssignmentStatus.approved}:
+        raise _conflict("Hints cannot be revealed after submission")
+    question = next((q for q in sa.assignment.questions if q.id == question_id), None)
+    if question is None:
+        raise _not_found("Question not found")
+    reveal_rows = await db.execute(select(HomeworkHintReveal).where(
+        HomeworkHintReveal.student_assignment_id == sa.id,
+        HomeworkHintReveal.question_id == question_id,
+    ).with_for_update())
+    next_index = len(reveal_rows.scalars().all())
+    if next_index >= min(3, len(question.hints)):
+        raise _conflict("No further hints are available")
+    db.add(HomeworkHintReveal(
+        school_id=school_id, student_assignment_id=sa.id, question_id=question_id, hint_index=next_index,
+    ))
+    await db.commit()
+    return HintRevealRead(question_id=question_id, hint_index=next_index, hint=question.hints[next_index])
+
+
+async def get_submission_result(
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID, student_assignment_id: uuid.UUID,
+) -> SubmissionResult:
+    result = await db.execute(select(StudentAssignment).where(
+        StudentAssignment.id == student_assignment_id, StudentAssignment.school_id == school_id,
+    ).options(selectinload(StudentAssignment.attempts).selectinload(HomeworkAttempt.question)))
+    sa = result.scalar_one_or_none()
+    if sa is None:
+        raise _not_found("Assignment not found")
+    if sa.student_id != student_id:
+        raise _forbidden()
+    if sa.status != StudentAssignmentStatus.approved:
+        raise _conflict("Grades are available after teacher approval")
     attempts = sorted(sa.attempts, key=lambda attempt: (attempt.question.order, str(attempt.question_id)))
-    return SubmissionResult(
-        student_assignment_id=sa.id,
-        score=sa.score,
-        correct_count=sum(attempt.is_correct for attempt in attempts),
-        total_count=len(attempts),
-        results=[AttemptResult(
-            question_id=attempt.question_id,
-            selected_option=attempt.student_answer,
-            is_correct=attempt.is_correct,
-            correctness_score=attempt.correctness_score,
-            correct_answer=attempt.question.correct_answer,
-        ) for attempt in attempts],
-    )
+    return SubmissionResult(student_assignment_id=sa.id, status=sa.status, score=sa.score, results=[
+        AttemptResult(question_id=attempt.question_id, answer=attempt.student_answer,
+                      teacher_score=attempt.teacher_score, teacher_comment=attempt.teacher_comment)
+        for attempt in attempts
+    ])
+
 
 async def submit_homework(
-    db: AsyncSession,
-    student_id: uuid.UUID,
-    school_id: uuid.UUID,
-    student_assignment_id: uuid.UUID,
-    answers: list[AnswerInput],
+    db: AsyncSession, student_id: uuid.UUID, school_id: uuid.UUID,
+    student_assignment_id: uuid.UUID, answers: list[AnswerInput],
 ) -> SubmissionResult:
-    stmt = (
-        select(StudentAssignment)
-        .where(
-            StudentAssignment.id == student_assignment_id,
-            StudentAssignment.school_id == school_id,
-        )
-        .options(
-            selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions)
-        )
-        .with_for_update()
-    )
-    result = await db.execute(stmt)
+    result = await db.execute(select(StudentAssignment).where(
+        StudentAssignment.id == student_assignment_id, StudentAssignment.school_id == school_id,
+    ).options(selectinload(StudentAssignment.assignment).selectinload(HomeworkAssignment.questions)).with_for_update())
     sa = result.scalar_one_or_none()
     if sa is None:
         raise _not_found()
     if sa.student_id != student_id:
         raise _forbidden()
-    if sa.status == StudentAssignmentStatus.submitted:
-        raise _conflict("Already submitted")
+    if sa.status in {StudentAssignmentStatus.submitted, StudentAssignmentStatus.graded, StudentAssignmentStatus.approved}:
+        raise _conflict("Submitted homework cannot be edited")
     if sa.assignment.status != AssignmentStatus.distributed:
         raise _conflict("Assignment is not open for submission")
-
     questions = {q.id: q for q in sa.assignment.questions}
-    answer_map = {a.question_id: a.selected_option for a in answers}
-
-    if not questions or len(answers) != len(answer_map) or set(answer_map.keys()) != set(questions.keys()):
+    answer_map = {answer.question_id: answer.answer for answer in answers}
+    if not questions or len(answers) != len(answer_map) or set(answer_map) != set(questions):
         raise _bad_request("Answers must cover exactly the assignment's questions")
-    for q_id, selected in answer_map.items():
-        if selected not in {option["id"] for option in questions[q_id].options}:
+    for question_id, answer in answer_map.items():
+        question = questions[question_id]
+        if question.format == "mcq" and answer not in {option["id"] for option in question.options}:
             raise _bad_request("Selected answer must match one of the question's option ids")
-
-    results: list[AttemptResult] = []
-    correct_count = 0
-
-    for q_id, q in questions.items():
-        selected = answer_map[q_id]
-        is_correct = selected == q.correct_answer
-        # THRESHOLD: 0.8 — will be configurable in v2
-        score = 1.0 if is_correct else 0.0
-        if is_correct:
-            correct_count += 1
-
-        attempt = HomeworkAttempt(
-            school_id=school_id,
-            student_id=student_id,
-            student_assignment_id=student_assignment_id,
-            question_id=q_id,
-            student_answer=selected,
-            is_correct=is_correct,
-            correctness_score=score,
-        )
-        db.add(attempt)
-
-        results.append(AttemptResult(
-            question_id=q_id,
-            selected_option=selected,
-            is_correct=is_correct,
-            correctness_score=score,
-            correct_answer=q.correct_answer,
+        db.add(HomeworkAttempt(
+            school_id=school_id, student_id=student_id, student_assignment_id=sa.id,
+            question_id=question_id, student_answer=answer,
+            is_correct=question.format == "mcq" and answer == question.correct_answer,
+            correctness_score=0.0,
         ))
-
-    overall_score = correct_count / len(questions)
-    sa.score = overall_score
+    sa.score = None
     sa.status = StudentAssignmentStatus.submitted
     sa.submitted_at = datetime.now(tz=timezone.utc)
-
-    # E5: upsert MasteryRecord for each concept that has a question
-    await _update_mastery_from_homework(db, student_id, school_id, sa.assignment, questions, results)
-
-    await db.flush()
     await db.commit()
-    return SubmissionResult(
-        student_assignment_id=student_assignment_id,
-        score=overall_score,
-        correct_count=correct_count,
-        total_count=len(questions),
-        results=results,
-    )
+    return SubmissionResult(student_assignment_id=sa.id, status=sa.status)
 
 
 async def _update_mastery_from_homework(

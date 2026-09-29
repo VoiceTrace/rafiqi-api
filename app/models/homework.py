@@ -33,7 +33,7 @@ class AssignmentStatus(StrEnum):
 
 class QuestionFormat(StrEnum):
     mcq = "mcq"
-    # RAFIQI_V2: short_answer = "short_answer"
+    short_note = "short_note"
     # RAFIQI_V2: spot_error   = "spot_error"
 
 
@@ -41,6 +41,8 @@ class StudentAssignmentStatus(StrEnum):
     assigned = "assigned"
     in_progress = "in_progress"
     submitted = "submitted"
+    graded = "graded"
+    approved = "approved"
 
 
 class HomeworkAssignment(Base):
@@ -49,6 +51,9 @@ class HomeworkAssignment(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
     teacher_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    grade_level: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    chapter: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     lesson_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -85,9 +90,9 @@ class HomeworkQuestion(Base):
     format: Mapped[str] = mapped_column(String(20), nullable=False, default=QuestionFormat.mcq)
     # MCQ: [{"id": "a", "text": "..."}, ...] — validated option list.
     options: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
-    # option id — NEVER sent to student
-    correct_answer: Mapped[str] = mapped_column(String(10), nullable=False)
-    # Three teacher-authored, progressive hints shown to the assigned student.
+    # MCQ option id; short-note questions have no automatic answer key.
+    correct_answer: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Up to three teacher-authored, progressive hints.
     hints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -112,6 +117,7 @@ class StudentAssignment(Base):
     # avg correctness_score across all submitted attempts
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # PARENT_V2: parent_delivery_status scaffold
@@ -121,6 +127,9 @@ class StudentAssignment(Base):
     assignment: Mapped[HomeworkAssignment] = relationship("HomeworkAssignment", back_populates="student_assignments")
     attempts: Mapped[list[HomeworkAttempt]] = relationship(
         "HomeworkAttempt", back_populates="student_assignment", cascade="all, delete-orphan",
+    )
+    hint_reveals: Mapped[list[HomeworkHintReveal]] = relationship(
+        "HomeworkHintReveal", back_populates="student_assignment", cascade="all, delete-orphan",
     )
 
 
@@ -136,12 +145,31 @@ class HomeworkAttempt(Base):
     student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     student_assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("student_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
     question_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("homework_questions.id", ondelete="CASCADE"), nullable=False, index=True)
-    student_answer: Mapped[str] = mapped_column(String(10), nullable=False)
+    student_answer: Mapped[str] = mapped_column(Text, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # THRESHOLD: 0.8 correctness threshold — will be made configurable in v2
     # For MCQ: 1.0 if correct, 0.0 if wrong (binary); threshold checked in service
     correctness_score: Mapped[float] = mapped_column(Float, nullable=False)
+    teacher_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    teacher_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     question: Mapped[HomeworkQuestion] = relationship("HomeworkQuestion", back_populates="attempts")
     student_assignment: Mapped[StudentAssignment] = relationship("StudentAssignment", back_populates="attempts")
+
+
+class HomeworkHintReveal(Base):
+    """Immutable audit trail for every progressive hint revealed by a student."""
+    __tablename__ = "homework_hint_reveals"
+    __table_args__ = (
+        UniqueConstraint("student_assignment_id", "question_id", "hint_index", name="uq_homework_hint_reveal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("student_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    question_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("homework_questions.id", ondelete="CASCADE"), nullable=False, index=True)
+    hint_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    revealed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    student_assignment: Mapped[StudentAssignment] = relationship("StudentAssignment", back_populates="hint_reveals")

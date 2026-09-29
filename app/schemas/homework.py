@@ -2,28 +2,29 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class HomeworkInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
-# ── Options ────────────────────────────────────────────────────────────────────
-
 class MCQOption(HomeworkInput):
     id: str = Field(..., min_length=1, max_length=10)
     text: str = Field(..., min_length=1)
 
 
-# ── Question ──────────────────────────────────────────────────────────────────
+QuestionFormat = Literal["mcq", "short_note"]
 
-class AddQuestionRequest(HomeworkInput):
+
+class QuestionInput(HomeworkInput):
     question_text: str = Field(..., min_length=1)
-    options: list[MCQOption] = Field(..., min_length=2, max_length=6)
-    correct_answer: str = Field(..., min_length=1, max_length=10)
-    hints: list[str] = Field(..., min_length=3, max_length=3)
+    format: QuestionFormat = "mcq"
+    options: list[MCQOption] = Field(default_factory=list, max_length=6)
+    correct_answer: str | None = Field(default=None, min_length=1, max_length=10)
+    hints: list[str] = Field(default_factory=list, max_length=3)
     concept_ref: str | None = Field(default=None, max_length=200)
     order: int = Field(default=0, ge=0)
 
@@ -36,57 +37,77 @@ class AddQuestionRequest(HomeworkInput):
 
     @field_validator("hints")
     @classmethod
-    def three_nonempty_hints(cls, hints: list[str]) -> list[str]:
+    def valid_hints(cls, hints: list[str]) -> list[str]:
         if any(not hint.strip() for hint in hints):
             raise ValueError("Each hint must be non-empty")
         if any(len(hint) > 500 for hint in hints):
             raise ValueError("Each hint must be at most 500 characters")
         return hints
 
+    @model_validator(mode="after")
+    def validate_format(self) -> "QuestionInput":
+        if self.format == "mcq":
+            if not 2 <= len(self.options) <= 6:
+                raise ValueError("MCQ questions need between 2 and 6 options")
+            if self.correct_answer not in {option.id for option in self.options}:
+                raise ValueError("correct_answer must match an MCQ option")
+        elif self.options or self.correct_answer is not None:
+            raise ValueError("Short-note questions do not have options or a correct answer")
+        return self
+
+
+class AddQuestionRequest(QuestionInput):
+    pass
+
 
 class UpdateQuestionRequest(HomeworkInput):
     question_text: str | None = Field(default=None, min_length=1)
-    options: list[MCQOption] | None = Field(default=None, min_length=2, max_length=6)
+    format: QuestionFormat | None = None
+    options: list[MCQOption] | None = Field(default=None, max_length=6)
     correct_answer: str | None = Field(default=None, min_length=1, max_length=10)
-    hints: list[str] | None = Field(default=None, min_length=3, max_length=3)
+    hints: list[str] | None = Field(default=None, max_length=3)
     concept_ref: str | None = Field(default=None, max_length=200)
     order: int | None = Field(default=None, ge=0)
 
     @field_validator("options")
     @classmethod
     def unique_option_ids(cls, options: list[MCQOption] | None) -> list[MCQOption] | None:
-        if options is not None:
-            return AddQuestionRequest.unique_option_ids(options)
-        return options
+        return QuestionInput.unique_option_ids(options) if options is not None else options
 
     @field_validator("hints")
     @classmethod
-    def three_nonempty_hints(cls, hints: list[str] | None) -> list[str] | None:
-        if hints is not None:
-            return AddQuestionRequest.three_nonempty_hints(hints)
-        return hints
+    def valid_hints(cls, hints: list[str] | None) -> list[str] | None:
+        return QuestionInput.valid_hints(hints) if hints is not None else hints
 
 
 class QuestionRead(BaseModel):
     id: uuid.UUID
     assignment_id: uuid.UUID
     question_text: str
-    format: str
+    format: QuestionFormat
     options: list[MCQOption]
+    concept_ref: str | None
+    hint_count: int
+    revealed_hint_count: int = 0
+    order: int
+
+
+class QuestionReadTeacher(BaseModel):
+    id: uuid.UUID
+    assignment_id: uuid.UUID
+    question_text: str
+    format: QuestionFormat
+    options: list[MCQOption]
+    correct_answer: str | None
     concept_ref: str | None
     hints: list[str]
     order: int
-    # correct_answer intentionally omitted — never sent to student
 
-
-class QuestionReadTeacher(QuestionRead):
-    """Teacher-only view: includes correct_answer."""
-    correct_answer: str
-
-
-# ── Assignment ────────────────────────────────────────────────────────────────
 
 class CreateAssignmentRequest(HomeworkInput):
+    grade_level: str = Field(..., min_length=1, max_length=100)
+    subject: str = Field(..., min_length=1, max_length=255)
+    chapter: str = Field(..., min_length=1, max_length=255)
     lesson_id: str = Field(..., min_length=1, max_length=100)
     title: str = Field(..., min_length=1, max_length=500)
     description: str | None = None
@@ -94,27 +115,26 @@ class CreateAssignmentRequest(HomeworkInput):
 
 
 class UpdateAssignmentRequest(HomeworkInput):
+    grade_level: str | None = Field(default=None, min_length=1, max_length=100)
+    subject: str | None = Field(default=None, min_length=1, max_length=255)
+    chapter: str | None = Field(default=None, min_length=1, max_length=255)
+    lesson_id: str | None = Field(default=None, min_length=1, max_length=100)
     title: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = None
     due_at: AwareDatetime | None = None
 
 
 class DistributeRequest(BaseModel):
-    student_ids: list[uuid.UUID] = Field(..., min_length=1)
     due_at: AwareDatetime | None = None
-
-    @field_validator("student_ids")
-    @classmethod
-    def unique_students(cls, ids: list[uuid.UUID]) -> list[uuid.UUID]:
-        if len(set(ids)) != len(ids):
-            raise ValueError("Student ids must be unique")
-        return ids
 
 
 class AssignmentRead(BaseModel):
     id: uuid.UUID
     school_id: uuid.UUID
     teacher_id: uuid.UUID
+    grade_level: str
+    subject: str
+    chapter: str
     lesson_id: str
     title: str
     description: str | None
@@ -129,11 +149,12 @@ class AssignmentWithQuestions(AssignmentRead):
     questions: list[QuestionReadTeacher]
 
 
-# ── Student-facing ────────────────────────────────────────────────────────────
-
 class StudentAssignmentRead(BaseModel):
     id: uuid.UUID
     assignment_id: uuid.UUID
+    grade_level: str
+    subject: str
+    chapter: str
     lesson_id: str
     title: str
     description: str | None
@@ -145,15 +166,12 @@ class StudentAssignmentRead(BaseModel):
 
 
 class StudentAssignmentWithQuestions(StudentAssignmentRead):
-    """Student view: questions WITHOUT correct_answer."""
     questions: list[QuestionRead]
 
 
-# ── Submission ────────────────────────────────────────────────────────────────
-
-class AnswerInput(BaseModel):
+class AnswerInput(HomeworkInput):
     question_id: uuid.UUID
-    selected_option: str = Field(..., min_length=1, max_length=10)
+    answer: str = Field(..., min_length=1, max_length=5000)
 
 
 class SubmitHomeworkRequest(BaseModel):
@@ -167,34 +185,76 @@ class SubmitHomeworkRequest(BaseModel):
         return answers
 
 
+class HintRevealRead(BaseModel):
+    question_id: uuid.UUID
+    hint_index: int
+    hint: str
+
+
 class AttemptResult(BaseModel):
     question_id: uuid.UUID
-    selected_option: str
-    is_correct: bool
-    correctness_score: float
-    correct_answer: str  # revealed after submission
+    answer: str
+    teacher_score: float | None = None
+    teacher_comment: str | None = None
 
 
 class SubmissionResult(BaseModel):
     student_assignment_id: uuid.UUID
-    score: float
-    correct_count: int
-    total_count: int
-    results: list[AttemptResult]
+    status: str
+    score: float | None = None
+    results: list[AttemptResult] = Field(default_factory=list)
 
 
-# ── Gap digest ────────────────────────────────────────────────────────────────
+class GradeAnswerInput(HomeworkInput):
+    question_id: uuid.UUID
+    score: float = Field(..., ge=0, le=1)
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class GradeSubmissionRequest(BaseModel):
+    grades: list[GradeAnswerInput] = Field(..., min_length=1)
+    approve: bool = False
+
+    @field_validator("grades")
+    @classmethod
+    def unique_questions(cls, grades: list[GradeAnswerInput]) -> list[GradeAnswerInput]:
+        if len({grade.question_id for grade in grades}) != len(grades):
+            raise ValueError("Each question can be graded only once")
+        return grades
+
+
+class TeacherAttemptRead(BaseModel):
+    question_id: uuid.UUID
+    question_text: str
+    format: QuestionFormat
+    answer: str
+    correct_answer: str | None
+    hints_revealed: int
+    teacher_score: float | None
+    teacher_comment: str | None
+
+
+class TeacherSubmissionRead(BaseModel):
+    student_assignment_id: uuid.UUID
+    student_id: uuid.UUID
+    student_name: str
+    status: str
+    score: float | None
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    attempts: list[TeacherAttemptRead]
+
 
 class ConceptGap(BaseModel):
     concept_ref: str
     avg_mastery: float
     student_count: int
-    confidence: str  # forming | developing | solid
+    confidence: str
 
 
 class GapDigestRead(BaseModel):
     lesson_id: str
     student_coverage: int
     total_students: int
-    coverage_sufficient: bool  # False when below threshold
+    coverage_sufficient: bool
     gaps: list[ConceptGap]
