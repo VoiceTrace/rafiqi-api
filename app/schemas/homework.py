@@ -89,6 +89,9 @@ class QuestionRead(BaseModel):
     concept_ref: str | None
     hint_count: int
     revealed_hint_count: int = 0
+    # Text of the hints this student has already revealed, in reveal order, so a
+    # page reload does not lose hints they have already spent a reveal on.
+    revealed_hints: list[str] = Field(default_factory=list)
     order: int
 
 

@@ -27,11 +27,13 @@ def test_hints_are_limited_to_three_and_nonempty(hints: list[str]) -> None:
         AddQuestionRequest(question_text="Q", format="short_note", hints=hints)
 
 
-def test_student_question_contract_never_exposes_answer_or_hint_text() -> None:
+def test_student_question_contract_never_exposes_answer_or_unrevealed_hints() -> None:
     fields = QuestionRead.model_fields
     assert "correct_answer" not in fields
+    # The full authored hint list must never reach the student; only the hints
+    # they have already spent a reveal on come back, via `revealed_hints`.
     assert "hints" not in fields
-    assert {"hint_count", "revealed_hint_count"}.issubset(fields)
+    assert {"hint_count", "revealed_hint_count", "revealed_hints"}.issubset(fields)
 
 
 def test_submission_accepts_mcq_and_short_note_answers() -> None:

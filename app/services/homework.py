@@ -53,13 +53,12 @@ from app.schemas.homework import (
     UpdateQuestionRequest,
 )
 
-# THRESHOLD: correctness threshold for a homework answer to be considered "correct".
-# Will be made configurable per assignment / year group in v2.
-CORRECT_THRESHOLD = 0.8
-
 # Minimum student coverage to present gap digest as reliable class-level data.
 # Below this, the digest is shown with a low-coverage warning.
 GAP_DIGEST_COVERAGE_THRESHOLD = 0.5  # 50 % of distributed students
+
+# A teacher may author fewer, but a student can never reveal more than this.
+MAX_HINTS_PER_QUESTION = 3
 
 # RAFIQI_V2: When differentiated generation is active, minimum number of
 # MasteryRecord entries required per student before personalization kicks in.
@@ -122,6 +121,9 @@ def _question_to_teacher_read(q: HomeworkQuestion) -> QuestionReadTeacher:
 
 
 def _question_to_student_read(q: HomeworkQuestion, revealed_hint_count: int = 0) -> QuestionRead:
+    # Mirror the reveal cap so the client never offers a hint the API would reject.
+    available = min(len(q.hints), MAX_HINTS_PER_QUESTION)
+    revealed = min(revealed_hint_count, available)
     return QuestionRead(
         id=q.id,
         assignment_id=q.assignment_id,
@@ -129,10 +131,17 @@ def _question_to_student_read(q: HomeworkQuestion, revealed_hint_count: int = 0)
         format=q.format,
         options=[MCQOption(id=o["id"], text=o["text"]) for o in q.options],
         concept_ref=q.concept_ref,
-        hint_count=len(q.hints),
-        revealed_hint_count=revealed_hint_count,
+        hint_count=available,
+        revealed_hint_count=revealed,
+        revealed_hints=list(q.hints[:revealed]),
         order=q.order,
     )
+
+
+def _student_visible_score(sa: StudentAssignment) -> float | None:
+    """Grades stay hidden until the teacher approves — a graded-but-unapproved
+    submission must look identical to an unmarked one from the student's side."""
+    return sa.score if sa.status == StudentAssignmentStatus.approved else None
 
 
 def _mastery_confidence(score: float) -> str:
@@ -444,8 +453,8 @@ async def distribute_assignment(
         raise _conflict("Only draft assignments can be distributed")
     if not a.questions:
         raise _conflict("Cannot distribute an assignment with no questions")
-    if any(len(question.hints) > 3 for question in a.questions):
-        raise _conflict("Questions can have at most 3 hints")
+    if any(len(question.hints) > MAX_HINTS_PER_QUESTION for question in a.questions):
+        raise _conflict(f"Questions can have at most {MAX_HINTS_PER_QUESTION} hints")
 
     recipients = await db.execute(select(User.id).where(
         User.school_id == school_id,
@@ -666,7 +675,7 @@ async def list_student_assignments(
             title=a.title,
             description=a.description,
             status=sa.status,
-            score=sa.score,
+            score=_student_visible_score(sa),
             due_at=a.due_at,
             submitted_at=sa.submitted_at,
             question_count=len(a.questions),
@@ -708,7 +717,7 @@ async def get_student_assignment(
         title=a.title,
         description=a.description,
         status=sa.status,
-        score=sa.score,
+        score=_student_visible_score(sa),
         due_at=a.due_at,
         submitted_at=sa.submitted_at,
         question_count=len(a.questions),
@@ -742,7 +751,7 @@ async def reveal_hint(
         HomeworkHintReveal.question_id == question_id,
     ).with_for_update())
     next_index = len(reveal_rows.scalars().all())
-    if next_index >= min(3, len(question.hints)):
+    if next_index >= min(MAX_HINTS_PER_QUESTION, len(question.hints)):
         raise _conflict("No further hints are available")
     db.add(HomeworkHintReveal(
         school_id=school_id, student_assignment_id=sa.id, question_id=question_id, hint_index=next_index,
@@ -808,51 +817,3 @@ async def submit_homework(
     await db.commit()
     return SubmissionResult(student_assignment_id=sa.id, status=sa.status)
 
-
-async def _update_mastery_from_homework(
-    db: AsyncSession,
-    student_id: uuid.UUID,
-    school_id: uuid.UUID,
-    assignment: HomeworkAssignment,
-    questions: dict[uuid.UUID, HomeworkQuestion],
-    results: list[AttemptResult],
-) -> None:
-    """Upsert MasteryRecord for concepts targeted by homework (E5)."""
-    concept_scores: dict[str, list[float]] = {}
-    for r in results:
-        q = questions[r.question_id]
-        if q.concept_ref:
-            concept_scores.setdefault(q.concept_ref, []).append(r.correctness_score)
-
-    for concept_ref, scores in concept_scores.items():
-        avg = sum(scores) / len(scores)
-        stmt = select(MasteryRecord).where(
-            MasteryRecord.school_id == school_id,
-            MasteryRecord.student_id == student_id,
-            MasteryRecord.lesson_id == assignment.lesson_id,
-            MasteryRecord.concept_ref == concept_ref,
-        ).with_for_update()
-        result = await db.execute(stmt)
-        mr = result.scalar_one_or_none()
-        if mr is None:
-            mr = MasteryRecord(
-                school_id=school_id,
-                student_id=student_id,
-                lesson_id=assignment.lesson_id,
-                concept_ref=concept_ref,
-                mastery_level=avg,
-                confidence=_mastery_confidence(avg),
-                attempt_count=len(scores),
-                correct_count=sum(1 for s in scores if s >= CORRECT_THRESHOLD),
-                last_attempt_at=datetime.now(tz=timezone.utc),
-            )
-            db.add(mr)
-        else:
-            # blend homework evidence with existing mastery
-            total = mr.attempt_count + len(scores)
-            blended = (mr.mastery_level * mr.attempt_count + avg * len(scores)) / total
-            mr.mastery_level = blended
-            mr.confidence = _mastery_confidence(blended)
-            mr.attempt_count = total
-            mr.correct_count = (mr.correct_count or 0) + sum(1 for s in scores if s >= CORRECT_THRESHOLD)
-            mr.last_attempt_at = datetime.now(tz=timezone.utc)

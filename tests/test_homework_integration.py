@@ -122,7 +122,12 @@ async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     assert (await client.get(student_path + "/results", headers=tokens["peer"])).status_code == 403
     assert (await client.get(student_path + "/results", headers=teacher)).status_code == 403
     submissions = await client.get(path + "/submissions", headers=teacher)
-    assert submissions.status_code == 200 and submissions.json()[0]["attempts"][0]["hints_revealed"] == 3
+    assert submissions.status_code == 200
+    # Grade-scoped distribution reaches every student in the grade, so the list also
+    # contains the peer who never submitted — select by id rather than by position.
+    rows = {row["student_id"]: row for row in submissions.json()}
+    assert rows[str(users["peer"].id)]["attempts"] == []
+    assert rows[str(users["student"].id)]["attempts"][0]["hints_revealed"] == 3
     graded = await client.post(path + f"/submissions/{received['id']}/grade", headers=teacher, json={"grades": [{"question_id": question_id, "score": 1, "comment": "Good work"}], "approve": True})
     assert graded.status_code == 200 and graded.json()["status"] == "approved"
     saved = await client.get(student_path + "/results", headers=tokens["student"])

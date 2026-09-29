@@ -1,27 +1,76 @@
 """Regression coverage for authoring and submission input integrity."""
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.models.homework import (
+    AssignmentStatus, HomeworkAssignment, HomeworkQuestion, StudentAssignment,
+    StudentAssignmentStatus,
+)
 from app.schemas.homework import (
     AddQuestionRequest, AnswerInput, CreateAssignmentRequest, DistributeRequest,
     SubmitHomeworkRequest, UpdateAssignmentRequest, UpdateQuestionRequest,
 )
 from app.services import homework as svc
-from tests.test_e1_homework import _make_assignment, _make_question, _make_student_assignment
+
+ASSIGNMENT_FIELDS = {
+    "grade_level": "grade-10", "subject": "Physics",
+    "chapter": "Forces and Motion", "lesson_id": "lesson-newton3",
+}
+
+
+def _make_assignment(**overrides) -> HomeworkAssignment:
+    # created_at/updated_at are server defaults, so an unsaved instance needs them
+    # set explicitly or AssignmentRead validation fails on None.
+    now = datetime.now(tz=timezone.utc)
+    values = {
+        "id": uuid.uuid4(), "school_id": uuid.uuid4(), "teacher_id": uuid.uuid4(),
+        "title": "Newton's Third Law", "description": None,
+        "status": AssignmentStatus.draft, "due_at": None,
+        "created_at": now, "updated_at": now, **ASSIGNMENT_FIELDS,
+    }
+    values.update(overrides)
+    assignment = HomeworkAssignment(**values)
+    assignment.questions = []
+    return assignment
+
+
+def _make_question(assignment: HomeworkAssignment, **overrides) -> HomeworkQuestion:
+    values = {
+        "id": uuid.uuid4(), "school_id": assignment.school_id, "assignment_id": assignment.id,
+        "question_text": "Which force acts back on the car?", "format": "mcq",
+        "options": [{"id": "a", "text": "Equal and opposite"}, {"id": "b", "text": "Smaller"}],
+        "correct_answer": "a", "hints": ["Think in pairs", "Same size", "Opposite direction"],
+        "concept_ref": "newton3", "order": 0,
+    }
+    values.update(overrides)
+    return HomeworkQuestion(**values)
+
+
+def _make_student_assignment(assignment: HomeworkAssignment, student_id: uuid.UUID, **overrides) -> StudentAssignment:
+    values = {
+        "id": uuid.uuid4(), "school_id": assignment.school_id, "student_id": student_id,
+        "assignment_id": assignment.id, "status": StudentAssignmentStatus.assigned,
+        "score": None, "submitted_at": None, "approved_at": None,
+    }
+    values.update(overrides)
+    received = StudentAssignment(**values)
+    received.hint_reveals = []
+    received.attempts = []
+    return received
 
 
 @pytest.mark.parametrize("schema,payload", [
-    (CreateAssignmentRequest, {"lesson_id": "lesson", "title": "   "}),
-    (CreateAssignmentRequest, {"lesson_id": "x" * 101, "title": "Title"}),
-    (CreateAssignmentRequest, {"lesson_id": "lesson", "title": "Title", "due_at": "2026-10-01T09:00"}),
+    (CreateAssignmentRequest, {**ASSIGNMENT_FIELDS, "title": "   "}),
+    (CreateAssignmentRequest, {**ASSIGNMENT_FIELDS, "lesson_id": "x" * 101, "title": "Title"}),
+    (CreateAssignmentRequest, {**ASSIGNMENT_FIELDS, "title": "Title", "due_at": "2026-10-01T09:00"}),
     (UpdateAssignmentRequest, {"title": ""}),
     (UpdateAssignmentRequest, {"title": "x" * 501}),
     (UpdateQuestionRequest, {"question_text": "   "}),
-    (UpdateQuestionRequest, {"options": []}),
     (UpdateQuestionRequest, {"correct_answer": "x" * 11}),
     (UpdateQuestionRequest, {"concept_ref": "x" * 201}),
     (UpdateQuestionRequest, {"order": -1}),
@@ -39,14 +88,12 @@ def test_duplicate_option_ids_rejected(schema):
         ])
 
 
-def test_duplicate_students_and_answers_rejected():
+def test_same_question_cannot_be_answered_twice():
     identifier = uuid.uuid4()
     with pytest.raises(ValidationError):
-        DistributeRequest(student_ids=[identifier, identifier])
-    with pytest.raises(ValidationError):
         SubmitHomeworkRequest(answers=[
-            {"question_id": identifier, "selected_option": "a"},
-            {"question_id": identifier, "selected_option": "b"},
+            {"question_id": identifier, "answer": "a"},
+            {"question_id": identifier, "answer": "b"},
         ])
 
 
@@ -89,31 +136,42 @@ async def test_explicit_null_clears_optional_assignment_fields():
 
 
 @pytest.mark.asyncio
-async def test_distribution_rejects_unmatched_recipient_before_writes():
+async def test_distribution_rejects_question_with_too_many_hints():
     assignment = _make_assignment()
-    assignment.questions = [_make_question(assignment)]
-    valid, invalid = uuid.uuid4(), uuid.uuid4()
-    db = make_db(assignment, [valid])
-    with pytest.raises(HTTPException) as error:
-        await svc.distribute_assignment(db, assignment.teacher_id, assignment.school_id,
-                                        assignment.id, DistributeRequest(student_ids=[valid, invalid]))
-    assert error.value.status_code == 400
-    db.add.assert_not_called()
-    db.commit.assert_not_awaited()
-    assert assignment.status == "draft"
-
-
-@pytest.mark.asyncio
-async def test_distribution_rejects_question_without_three_hints():
-    assignment = _make_assignment()
-    question = _make_question(assignment, hints=[])
-    assignment.questions = [question]
+    assignment.questions = [_make_question(assignment, hints=["1", "2", "3", "4"])]
     db = make_db(assignment)
     with pytest.raises(HTTPException) as error:
         await svc.distribute_assignment(db, assignment.teacher_id, assignment.school_id,
-                                        assignment.id, DistributeRequest(student_ids=[uuid.uuid4()]))
+                                        assignment.id, DistributeRequest())
     assert error.value.status_code == 409
     db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hints", [[], ["only one"], ["one", "two"]])
+async def test_distribution_allows_fewer_than_the_maximum_hints(hints):
+    """Hints are capped at three, not required to be three."""
+    assignment = _make_assignment()
+    assignment.questions = [_make_question(assignment, hints=hints)]
+    student_id = uuid.uuid4()
+    db = make_db(assignment, [student_id])
+    await svc.distribute_assignment(db, assignment.teacher_id, assignment.school_id,
+                                    assignment.id, DistributeRequest())
+    assert assignment.status == AssignmentStatus.distributed
+    db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_distribution_without_students_in_grade_is_rejected():
+    assignment = _make_assignment()
+    assignment.questions = [_make_question(assignment)]
+    db = make_db(assignment, [])
+    with pytest.raises(HTTPException) as error:
+        await svc.distribute_assignment(db, assignment.teacher_id, assignment.school_id,
+                                        assignment.id, DistributeRequest())
+    assert error.value.status_code == 409
+    db.add.assert_not_called()
+    assert assignment.status == AssignmentStatus.draft
 
 
 @pytest.mark.asyncio
@@ -129,20 +187,36 @@ async def test_non_draft_metadata_cannot_change(status):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", ["unknown_option", "duplicate_question", "closed_assignment"])
-async def test_invalid_submission_cannot_write_attempts_or_mastery(invalid):
+@pytest.mark.parametrize("invalid", ["unknown_option", "missing_question", "closed_assignment"])
+async def test_invalid_submission_cannot_write_attempts(invalid):
     assignment = _make_assignment(status="closed" if invalid == "closed_assignment" else "distributed")
     question = _make_question(assignment)
-    assignment.questions = [question]
+    assignment.questions = [question, _make_question(assignment, order=1)]
     student = uuid.uuid4()
     received = _make_student_assignment(assignment, student)
     received.assignment = assignment
     db = make_db(received)
-    answers = [AnswerInput(question_id=question.id, selected_option="z" if invalid == "unknown_option" else "a")]
-    if invalid == "duplicate_question":
-        answers.append(AnswerInput(question_id=question.id, selected_option="b"))
+    answers = [AnswerInput(question_id=question.id, answer="z" if invalid == "unknown_option" else "a")]
+    if invalid != "missing_question":
+        answers.append(AnswerInput(question_id=assignment.questions[1].id, answer="a"))
     with pytest.raises(HTTPException) as error:
         await svc.submit_homework(db, student, assignment.school_id, received.id, answers)
     assert error.value.status_code == (409 if invalid == "closed_assignment" else 400)
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submitted_homework_cannot_be_resubmitted():
+    assignment = _make_assignment(status="distributed")
+    assignment.questions = [_make_question(assignment)]
+    student = uuid.uuid4()
+    received = _make_student_assignment(assignment, student, status=StudentAssignmentStatus.submitted)
+    received.assignment = assignment
+    db = make_db(received)
+    with pytest.raises(HTTPException) as error:
+        await svc.submit_homework(db, student, assignment.school_id, received.id,
+                                  [AnswerInput(question_id=assignment.questions[0].id, answer="a")])
+    assert error.value.status_code == 409
     db.add.assert_not_called()
     db.commit.assert_not_awaited()

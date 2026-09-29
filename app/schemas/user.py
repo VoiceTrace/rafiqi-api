@@ -13,7 +13,8 @@ class UserRead(BaseModel):
     email: str
     full_name: str
     role: str
-    grade_level: str | None
+    # Only students carry a grade; teachers legitimately have none.
+    grade_level: str | None = None
     is_active: bool
     avatar_url: str | None
     created_at: datetime
