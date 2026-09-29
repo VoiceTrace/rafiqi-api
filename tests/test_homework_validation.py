@@ -104,6 +104,19 @@ async def test_distribution_rejects_unmatched_recipient_before_writes():
 
 
 @pytest.mark.asyncio
+async def test_distribution_rejects_question_without_three_hints():
+    assignment = _make_assignment()
+    question = _make_question(assignment, hints=[])
+    assignment.questions = [question]
+    db = make_db(assignment)
+    with pytest.raises(HTTPException) as error:
+        await svc.distribute_assignment(db, assignment.teacher_id, assignment.school_id,
+                                        assignment.id, DistributeRequest(student_ids=[uuid.uuid4()]))
+    assert error.value.status_code == 409
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["distributed", "closed"])
 async def test_non_draft_metadata_cannot_change(status):
     assignment = _make_assignment(status=status)

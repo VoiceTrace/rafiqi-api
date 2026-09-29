@@ -107,6 +107,7 @@ def _question_to_teacher_read(q: HomeworkQuestion) -> QuestionReadTeacher:
         format=q.format,
         options=[MCQOption(id=o["id"], text=o["text"]) for o in q.options],
         concept_ref=q.concept_ref,
+        hints=q.hints,
         order=q.order,
         correct_answer=q.correct_answer,
     )
@@ -120,6 +121,7 @@ def _question_to_student_read(q: HomeworkQuestion) -> QuestionRead:
         format=q.format,
         options=[MCQOption(id=o["id"], text=o["text"]) for o in q.options],
         concept_ref=q.concept_ref,
+        hints=q.hints,
         order=q.order,
     )
 
@@ -320,6 +322,7 @@ async def add_question(
         format="mcq",
         options=[o.model_dump() for o in req.options],
         correct_answer=req.correct_answer,
+        hints=req.hints,
         concept_ref=req.concept_ref,
         order=req.order,
     )
@@ -361,6 +364,8 @@ async def update_question(
         q.options = options
     if req.correct_answer is not None:
         q.correct_answer = req.correct_answer
+    if req.hints is not None:
+        q.hints = req.hints
     if "concept_ref" in req.model_fields_set:
         q.concept_ref = req.concept_ref
     if req.order is not None:
@@ -407,6 +412,8 @@ async def distribute_assignment(
         raise _conflict("Only draft assignments can be distributed")
     if not a.questions:
         raise _conflict("Cannot distribute an assignment with no questions")
+    if any(len(question.hints) != 3 for question in a.questions):
+        raise _conflict("Each question must have exactly 3 hints before distribution")
 
     recipients = await db.execute(select(User.id).where(
         User.school_id == school_id,

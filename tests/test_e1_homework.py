@@ -92,6 +92,7 @@ def _make_question(assignment: HomeworkAssignment, **kwargs) -> HomeworkQuestion
         {"id": "d", "text": "6"},
     ]
     q.correct_answer = "b"
+    q.hints = ["Count the two groups.", "Add the numbers.", "Choose the matching total."]
     q.concept_ref = "addition"
     q.order = 0
     for k, v in kwargs.items():
@@ -143,6 +144,7 @@ class TestAddQuestionRequestSchema:
             question_text="What is 2+2?",
             options=self._valid_options(),
             correct_answer="b",
+            hints=["First hint", "Second hint", "Third hint"],
         )
         assert req.question_text == "What is 2+2?"
         assert req.correct_answer == "b"
@@ -153,6 +155,7 @@ class TestAddQuestionRequestSchema:
                 question_text="Q",
                 options=[MCQOption(id="a", text="only one")],
                 correct_answer="a",
+                hints=["First hint", "Second hint", "Third hint"],
             )
 
     def test_empty_question_text(self):
@@ -161,7 +164,13 @@ class TestAddQuestionRequestSchema:
                 question_text="",
                 options=self._valid_options(),
                 correct_answer="a",
+                hints=["First hint", "Second hint", "Third hint"],
             )
+
+    @pytest.mark.parametrize("hints", [[], ["one", "two"], ["one", "two", "three", "four"], ["one", " ", "three"]])
+    def test_requires_exactly_three_nonempty_hints(self, hints):
+        with pytest.raises(ValidationError):
+            AddQuestionRequest(question_text="Q", options=self._valid_options(), correct_answer="a", hints=hints)
 
 
 class TestSubmitHomeworkRequestSchema:
@@ -235,6 +244,7 @@ class TestQuestionReadConversion:
         q = _make_question(a)
         s = _question_to_student_read(q)
         assert not hasattr(s, "correct_answer")
+        assert s.hints == q.hints
         # confirm correct_answer is actually absent from the model dump
         dump = s.model_dump()
         assert "correct_answer" not in dump
@@ -312,6 +322,7 @@ class TestAddQuestion:
             question_text="What is 2+2?",
             options=[MCQOption(id="a", text="3"), MCQOption(id="b", text="4")],
             correct_answer="b",
+            hints=["First hint", "Second hint", "Third hint"],
         )
         result = await add_question(db=db, teacher_id=a.teacher_id, school_id=a.school_id, assignment_id=a.id, req=req)
         assert result.correct_answer == "b"
@@ -328,6 +339,7 @@ class TestAddQuestion:
             question_text="Q",
             options=[MCQOption(id="a", text="A"), MCQOption(id="b", text="B")],
             correct_answer="z",  # not in options
+            hints=["First hint", "Second hint", "Third hint"],
         )
         with pytest.raises(HTTPException) as exc_info:
             await add_question(db=db, teacher_id=a.teacher_id, school_id=a.school_id, assignment_id=a.id, req=req)
@@ -344,6 +356,7 @@ class TestAddQuestion:
             question_text="Q",
             options=[MCQOption(id="a", text="A"), MCQOption(id="b", text="B")],
             correct_answer="a",
+            hints=["First hint", "Second hint", "Third hint"],
         )
         with pytest.raises(HTTPException) as exc_info:
             await add_question(db=db, teacher_id=a.teacher_id, school_id=a.school_id, assignment_id=a.id, req=req)
@@ -360,6 +373,7 @@ class TestAddQuestion:
             question_text="Q",
             options=[MCQOption(id="a", text="A"), MCQOption(id="b", text="B")],
             correct_answer="a",
+            hints=["First hint", "Second hint", "Third hint"],
         )
         other_teacher = uuid.uuid4()
         with pytest.raises(HTTPException) as exc_info:

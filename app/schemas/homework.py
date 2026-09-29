@@ -23,6 +23,7 @@ class AddQuestionRequest(HomeworkInput):
     question_text: str = Field(..., min_length=1)
     options: list[MCQOption] = Field(..., min_length=2, max_length=6)
     correct_answer: str = Field(..., min_length=1, max_length=10)
+    hints: list[str] = Field(..., min_length=3, max_length=3)
     concept_ref: str | None = Field(default=None, max_length=200)
     order: int = Field(default=0, ge=0)
 
@@ -33,11 +34,21 @@ class AddQuestionRequest(HomeworkInput):
             raise ValueError("Option ids must be unique")
         return options
 
+    @field_validator("hints")
+    @classmethod
+    def three_nonempty_hints(cls, hints: list[str]) -> list[str]:
+        if any(not hint.strip() for hint in hints):
+            raise ValueError("Each hint must be non-empty")
+        if any(len(hint) > 500 for hint in hints):
+            raise ValueError("Each hint must be at most 500 characters")
+        return hints
+
 
 class UpdateQuestionRequest(HomeworkInput):
     question_text: str | None = Field(default=None, min_length=1)
     options: list[MCQOption] | None = Field(default=None, min_length=2, max_length=6)
     correct_answer: str | None = Field(default=None, min_length=1, max_length=10)
+    hints: list[str] | None = Field(default=None, min_length=3, max_length=3)
     concept_ref: str | None = Field(default=None, max_length=200)
     order: int | None = Field(default=None, ge=0)
 
@@ -48,6 +59,13 @@ class UpdateQuestionRequest(HomeworkInput):
             return AddQuestionRequest.unique_option_ids(options)
         return options
 
+    @field_validator("hints")
+    @classmethod
+    def three_nonempty_hints(cls, hints: list[str] | None) -> list[str] | None:
+        if hints is not None:
+            return AddQuestionRequest.three_nonempty_hints(hints)
+        return hints
+
 
 class QuestionRead(BaseModel):
     id: uuid.UUID
@@ -56,6 +74,7 @@ class QuestionRead(BaseModel):
     format: str
     options: list[MCQOption]
     concept_ref: str | None
+    hints: list[str]
     order: int
     # correct_answer intentionally omitted — never sent to student
 

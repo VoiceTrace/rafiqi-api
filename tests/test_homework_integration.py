@@ -83,6 +83,7 @@ async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     question = await client.post(path + "/questions", headers=teacher, json={
         "question_text": "2 + 2?", "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
         "correct_answer": "b", "concept_ref": "addition",
+        "hints": ["Count the first group.", "Add two and two.", "Choose the total of four."],
     })
     assert question.status_code == 201, question.text
     question_id = question.json()["id"]
@@ -106,6 +107,7 @@ async def test_homework_route_lifecycle_and_tenant_isolation(homework_api):
     quiz = await client.get(student_path, headers=tokens["student"])
     assert quiz.status_code == 200
     assert "correct_answer" not in quiz.text
+    assert quiz.json()["questions"][0]["hints"] == ["Count the first group.", "Add two and two.", "Choose the total of four."]
     hidden = await client.get(student_path + "/results", headers=tokens["student"])
     assert hidden.status_code == 409
     assert "correct_answer" not in hidden.text

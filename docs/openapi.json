@@ -2007,6 +2007,15 @@
             "minLength": 1,
             "title": "Correct Answer"
           },
+          "hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Hints"
+          },
           "concept_ref": {
             "anyOf": [
               {
@@ -2030,7 +2039,8 @@
         "required": [
           "question_text",
           "options",
-          "correct_answer"
+          "correct_answer",
+          "hints"
         ],
         "title": "AddQuestionRequest"
       },
@@ -2767,6 +2777,13 @@
             ],
             "title": "Concept Ref"
           },
+          "hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hints"
+          },
           "order": {
             "type": "integer",
             "title": "Order"
@@ -2784,6 +2801,7 @@
           "format",
           "options",
           "concept_ref",
+          "hints",
           "order",
           "correct_answer"
         ],
@@ -3396,6 +3414,22 @@
             ],
             "title": "Correct Answer"
           },
+          "hints": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hints"
+          },
           "concept_ref": {
             "anyOf": [
               {
@@ -3722,6 +3756,13 @@
             ],
             "title": "Concept Ref"
           },
+          "hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hints"
+          },
           "order": {
             "type": "integer",
             "title": "Order"
@@ -3735,6 +3776,7 @@
           "format",
           "options",
           "concept_ref",
+          "hints",
           "order"
         ],
         "title": "QuestionRead"

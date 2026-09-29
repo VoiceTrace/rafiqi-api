@@ -87,11 +87,9 @@ class HomeworkQuestion(Base):
     options: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
     # option id — NEVER sent to student
     correct_answer: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Three teacher-authored, progressive hints shown to the assigned student.
+    hints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # RAFIQI_V2: progressive hints from Rafiqi
-    # hint_1: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # hint_2: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     assignment: Mapped[HomeworkAssignment] = relationship("HomeworkAssignment", back_populates="questions")
     attempts: Mapped[list[HomeworkAttempt]] = relationship(
