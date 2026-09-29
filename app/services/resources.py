@@ -74,7 +74,19 @@ async def add_student(db, school_id, teacher_id, class_id, student_id):
 
 async def list_resources(db, school_id, teacher_id):
     rows = (await db.execute(select(TeacherResource).where(TeacherResource.school_id == school_id, TeacherResource.created_by == teacher_id, TeacherResource.archived_at.is_(None)).order_by(TeacherResource.created_at.desc()))).scalars().all()
-    return rows
+    assignments = (await db.execute(select(LessonMaterial.resource_id, TeacherClass.id)
+        .join(TeacherClass, TeacherClass.id == LessonMaterial.class_id)
+        .where(LessonMaterial.school_id == school_id, TeacherClass.school_id == school_id, TeacherClass.teacher_id == teacher_id))).all()
+    assigned_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for resource_id, class_id in assignments:
+        assigned_classes.setdefault(resource_id, set()).add(class_id)
+    return [{
+        "id": row.id, "type": row.type, "title": row.title, "description": row.description,
+        "question": row.question, "answer": row.answer, "source_url": row.source_url,
+        "original_filename": row.original_filename, "media_type": row.media_type,
+        "byte_size": row.byte_size, "created_at": row.created_at,
+        "assigned_class_ids": sorted(assigned_classes.get(row.id, set()), key=str),
+    } for row in rows]
 
 
 async def create_resource(db, school_id, teacher_id, body):

@@ -47,6 +47,7 @@ class ResourceOut(BaseModel):
     media_type: str | None
     byte_size: int | None
     created_at: datetime
+    assigned_class_ids: list[uuid.UUID] = Field(default_factory=list)
 
 class AssignmentCreate(BaseModel):
     class_id: uuid.UUID
