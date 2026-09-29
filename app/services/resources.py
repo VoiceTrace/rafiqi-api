@@ -149,8 +149,9 @@ async def list_student_materials(db, school_id, student_id, lesson_id, locale):
             LessonMaterial.lesson_id == lesson_id, TeacherResource.archived_at.is_(None)).order_by(LessonMaterial.created_at))
     rows = (await db.execute(query)).all()
     return [{"id": assignment.id, "lesson_id": assignment.lesson_id, "type": resource.type, "title": resource.title,
-        "description": resource.description, "source_url": resource.source_url,
+        "description": resource.description, "question": resource.question, "source_url": resource.source_url,
         "download_url": f"/study-materials/{assignment.id}/download" if resource.storage_name else None,
+        "original_filename": resource.original_filename, "media_type": resource.media_type, "byte_size": resource.byte_size,
         "required": assignment.required, "completed": bool(completed)} for assignment, resource, completed in rows]
 
 
@@ -179,3 +180,14 @@ async def get_download(db, school_id, user_id, user_role, assignment_id):
     else:
         query = query.join(TeacherClass, TeacherClass.id == LessonMaterial.class_id).where(TeacherClass.teacher_id == user_id)
     return await db.scalar(query)
+
+
+async def get_library_resource_download(db, school_id, teacher_id, resource_id):
+    """Return an uploaded library asset only to its owner within the same school."""
+    return await db.scalar(select(TeacherResource).where(
+        TeacherResource.id == resource_id,
+        TeacherResource.school_id == school_id,
+        TeacherResource.created_by == teacher_id,
+        TeacherResource.archived_at.is_(None),
+        TeacherResource.storage_name.is_not(None),
+    ))

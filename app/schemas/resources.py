@@ -60,8 +60,12 @@ class StudentMaterialOut(BaseModel):
     type: ResourceType
     title: str
     description: str
+    question: str | None
     source_url: str | None
     download_url: str | None
+    original_filename: str | None
+    media_type: str | None
+    byte_size: int | None
     required: bool
     completed: bool
 

@@ -20,6 +20,18 @@ def _http(error: svc.ResourceError):
     code = ErrorCode.NOT_FOUND if error.status == 404 else ErrorCode.VALIDATION_ERROR if error.status == 422 else ErrorCode.INTERNAL_ERROR
     return HTTPException(status_code=error.status, detail={"error": {"code": code, "message": error.code}})
 
+
+def _private_file_response(resource, inline: bool):
+    if resource is None or not resource.storage_name:
+        raise HTTPException(status_code=404, detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Material not found"}})
+    path = (Path(settings.RESOURCE_STORAGE_DIR) / resource.storage_name).resolve()
+    root = Path(settings.RESOURCE_STORAGE_DIR).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Material not found"}})
+    return FileResponse(path, media_type=resource.media_type or "application/octet-stream",
+        filename=resource.original_filename or resource.title,
+        content_disposition_type="inline" if inline else "attachment")
+
 @router.get("/teacher/resource-grades")
 async def grades(user: Teacher, db: Db, locale: str = "en"):
     return await svc.list_grades(db, locale if locale in ("en", "ar") else "en")
@@ -78,11 +90,13 @@ async def completion(lesson_id: str, assignment_id: uuid.UUID, body: CompletionU
     try: return await svc.set_completion(db, user.school_id, user.id, lesson_id, assignment_id, body.completed)
     except svc.ResourceError as error: raise _http(error)
 
+@router.get("/teacher/resources/{resource_id}/download")
+async def teacher_resource_download(resource_id: uuid.UUID, user: Teacher, db: Db, inline: bool = False):
+    resource = await svc.get_library_resource_download(db, user.school_id, user.id, resource_id)
+    return _private_file_response(resource, inline)
+
+
 @router.get("/study-materials/{assignment_id}/download")
-async def download(assignment_id: uuid.UUID, user: Current, db: Db):
+async def download(assignment_id: uuid.UUID, user: Current, db: Db, inline: bool = False):
     resource = await svc.get_download(db, user.school_id, user.id, user.role, assignment_id)
-    if resource is None or not resource.storage_name: raise HTTPException(status_code=404, detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Material not found"}})
-    path = (Path(settings.RESOURCE_STORAGE_DIR) / resource.storage_name).resolve()
-    root = Path(settings.RESOURCE_STORAGE_DIR).resolve()
-    if root not in path.parents or not path.is_file(): raise HTTPException(status_code=404, detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Material not found"}})
-    return FileResponse(path, media_type=resource.media_type or "application/octet-stream", filename=resource.original_filename or resource.title)
+    return _private_file_response(resource, inline)
