@@ -85,6 +85,12 @@ async def chat_completion(
     callers must parse the result leniently either way (see
     `parse_json_object` below), since without enforced structured output the
     model can still wrap JSON in prose or a code fence despite instructions.
+
+    Also strips any leaked `<think>...</think>` block from the returned
+    content before returning it (see `_strip_think_tags`) — `reasoning:
+    {"enabled": false}` above isn't reliably honored by every provider
+    either, and a raw chain-of-thought block has been observed reaching an
+    actual Cave reply shown to a student.
     """
     payload: dict = {
         "model": model,
@@ -127,7 +133,32 @@ async def chat_completion(
         # a caller that will try to persist it into a NOT NULL column.
         raise LLMError(f"LLM gateway returned null content: {data}")
 
+    if "<think" in content.lower():
+        # reasoning.enabled=false (above) isn't honored by every provider behind
+        # this model either — same class of gap as response_format. Observed
+        # live: a real Cave reply to a student with a raw <think>...</think>
+        # chain-of-thought block prepended to the actual message. A prompt
+        # instruction can't override a backend's own output format, so this is
+        # stripped deterministically rather than relied on to not happen.
+        logger.warning("LLM response for model=%s contained a leaked <think> block, stripping", model)
+    content = _strip_think_tags(content)
+    if not content:
+        raise LLMError(f"LLM gateway returned only a reasoning block, no usable content: {data}")
+
     return content
+
+
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_UNCLOSED_THINK_RE = re.compile(r"<think>.*", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_think_tags(content: str) -> str:
+    stripped = _THINK_BLOCK_RE.sub("", content)
+    if stripped == content and "<think" in content.lower():
+        # Opening tag with no closing one — likely truncated mid-reasoning by
+        # max_tokens — strip from the tag to the end rather than leave it raw.
+        stripped = _UNCLOSED_THINK_RE.sub("", content)
+    return stripped.strip()
 
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
