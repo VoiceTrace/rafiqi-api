@@ -1,0 +1,477 @@
+{
+  "subjects": [
+    {
+      "id": "physics",
+      "title": {
+        "en": "Physics",
+        "ar": "الفيزياء"
+      }
+    },
+    {
+      "id": "mathematics",
+      "title": {
+        "en": "Mathematics",
+        "ar": "الرياضيات"
+      }
+    }
+  ],
+  "chapters": [
+    {
+      "id": "forces-motion",
+      "subject_id": "physics",
+      "title": {
+        "en": "Forces and Motion",
+        "ar": "القوى والحركة"
+      }
+    },
+    {
+      "id": "energy",
+      "subject_id": "physics",
+      "title": {
+        "en": "Energy",
+        "ar": "الطاقة"
+      }
+    },
+    {
+      "id": "fractions",
+      "subject_id": "mathematics",
+      "title": {
+        "en": "Fractions",
+        "ar": "الكسور"
+      }
+    }
+  ],
+  "lessons": [
+    {
+      "id": "newton-third-law",
+      "chapter_id": "forces-motion",
+      "content": {
+        "en": {
+          "title": "Newton’s Third Law",
+          "subject": "Physics",
+          "chapter": "Forces and Motion",
+          "objective": "Understand and apply Newton’s Third Law: when one object exerts a force on a second object, the second exerts an equal and opposite force on the first.",
+          "key_points": [
+            "Forces always come in pairs: action and reaction.",
+            "The two forces are equal in size and opposite in direction.",
+            "They act on different objects, so they do not cancel each other.",
+            "Both forces happen at the same time."
+          ],
+          "questions": [
+            {
+              "id": "force-pairs",
+              "kind": "choice",
+              "text": "A car pushes a trailer forward. What force does the trailer exert on the car?",
+              "options": [
+                {
+                  "id": "equal",
+                  "text": "An equal force backward"
+                },
+                {
+                  "id": "smaller",
+                  "text": "A smaller force backward"
+                },
+                {
+                  "id": "none",
+                  "text": "No force on the car"
+                }
+              ],
+              "answer": "equal",
+              "hints": [
+                "Think about how the two objects act on each other.",
+                "The pair has the same size, but opposite directions.",
+                "The trailer exerts an equal force backward on the car."
+              ],
+              "explanation": "The trailer exerts an equal force in the opposite direction. The forces act on different objects.",
+              "concept_ref": "action-reaction"
+            },
+            {
+              "id": "different-objects",
+              "kind": "written",
+              "text": "Explain in your own words why action and reaction forces do not cancel.",
+              "options": [],
+              "keywords": [
+                [
+                  "different",
+                  "separate",
+                  "other"
+                ],
+                [
+                  "object",
+                  "bodies",
+                  "body"
+                ]
+              ],
+              "hints": [
+                "Consider which object each force acts on.",
+                "For forces to cancel, they must act on the same object.",
+                "Action and reaction act on different objects, so they do not cancel on either object."
+              ],
+              "explanation": "Action and reaction act on different objects. Cancellation requires opposing forces on the same object.",
+              "concept_ref": "action-reaction"
+            }
+          ],
+          "concept_refs": [
+            {
+              "id": "action-reaction",
+              "title": "Action and reaction",
+              "description": "An interaction produces equal and opposite forces on different objects."
+            }
+          ]
+        },
+        "ar": {
+          "title": "قانون نيوتن الثالث",
+          "subject": "الفيزياء",
+          "chapter": "القوى والحركة",
+          "objective": "فهم قانون نيوتن الثالث وتطبيقه: عندما يؤثر جسم بقوة في جسم آخر، يؤثر الجسم الثاني بقوة مساوية لها في المقدار ومعاكسة لها في الاتجاه على الجسم الأول.",
+          "key_points": [
+            "تظهر القوى دائماً في أزواج: فعل ورد فعل.",
+            "القوتان متساويتان في المقدار ومتعاكستان في الاتجاه.",
+            "تؤثران في جسمين مختلفين، لذلك لا تلغي إحداهما الأخرى.",
+            "تحدث القوتان في الوقت نفسه."
+          ],
+          "questions": [
+            {
+              "id": "force-pairs",
+              "kind": "choice",
+              "text": "تدفع سيارة مقطورة إلى الأمام. ما القوة التي تؤثر بها المقطورة على السيارة؟",
+              "options": [
+                {
+                  "id": "equal",
+                  "text": "قوة مساوية إلى الخلف"
+                },
+                {
+                  "id": "smaller",
+                  "text": "قوة أصغر إلى الخلف"
+                },
+                {
+                  "id": "none",
+                  "text": "لا تؤثر بقوة على السيارة"
+                }
+              ],
+              "answer": "equal",
+              "hints": [
+                "فكر في تأثير كل جسم على الآخر.",
+                "القوتان متساويتان في المقدار ومتعاكستان في الاتجاه.",
+                "تؤثر المقطورة بقوة مساوية إلى الخلف على السيارة."
+              ],
+              "explanation": "تؤثر المقطورة بقوة مساوية في الاتجاه المعاكس. تؤثر القوتان في جسمين مختلفين.",
+              "concept_ref": "action-reaction"
+            },
+            {
+              "id": "different-objects",
+              "kind": "written",
+              "text": "اشرح بكلماتك لماذا لا تلغي قوتا الفعل ورد الفعل إحداهما الأخرى.",
+              "options": [],
+              "keywords": [
+                [
+                  "مختلف",
+                  "منفصل",
+                  "آخر",
+                  "اخر"
+                ],
+                [
+                  "جسم",
+                  "أجسام",
+                  "اجسام"
+                ]
+              ],
+              "hints": [
+                "فكر في الجسم الذي تؤثر عليه كل قوة.",
+                "لكي تتعادل القوتان، يجب أن تؤثرا في الجسم نفسه.",
+                "تؤثر قوتا الفعل ورد الفعل في جسمين مختلفين، لذلك لا تتلاشيان على أي منهما."
+              ],
+              "explanation": "تؤثر قوتا الفعل ورد الفعل في جسمين مختلفين. يتطلب التعادل قوتين متعاكستين على الجسم نفسه.",
+              "concept_ref": "action-reaction"
+            }
+          ],
+          "concept_refs": [
+            {
+              "id": "action-reaction",
+              "title": "الفعل ورد الفعل",
+              "description": "ينتج عن التفاعل قوتان متساويتان ومتعاكستان تؤثران في جسمين مختلفين."
+            }
+          ]
+        },
+        "subject_id": "physics",
+        "chapter_id": "forces-motion"
+      }
+    },
+    {
+      "id": "balanced-forces",
+      "chapter_id": "forces-motion",
+      "content": {
+        "subject_id": "physics",
+        "chapter_id": "forces-motion",
+        "en": {
+          "title": "Balanced Forces",
+          "subject": "Physics",
+          "chapter": "Forces and Motion",
+          "objective": "Explain motion when the net force is zero.",
+          "key_points": [
+            "Balanced forces give zero net force.",
+            "An object stays at rest or moves with constant velocity."
+          ],
+          "concept_refs": [
+            {
+              "id": "net-force",
+              "title": "Net force",
+              "description": "Zero net force means no acceleration; it does not necessarily mean no motion."
+            }
+          ],
+          "questions": [
+            {
+              "id": "balanced-forces-check",
+              "kind": "choice",
+              "text": "A moving object has zero net force. What happens to its velocity?",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "It stays constant"
+                },
+                {
+                  "id": "other",
+                  "text": "It must immediately stop"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "Consider whether there is acceleration.",
+                "Acceleration requires a nonzero net force.",
+                "With zero net force, velocity stays constant."
+              ],
+              "explanation": "Zero net force means no acceleration; it does not necessarily mean no motion.",
+              "concept_ref": "net-force"
+            }
+          ]
+        },
+        "ar": {
+          "title": "القوى المتزنة",
+          "subject": "الفيزياء",
+          "chapter": "القوى والحركة",
+          "objective": "تفسير حركة الجسم عندما تكون محصلة القوى صفراً.",
+          "key_points": [
+            "محصلة القوى المتزنة تساوي صفراً.",
+            "يبقى الجسم ساكناً أو يتحرك بسرعة متجهة ثابتة."
+          ],
+          "concept_refs": [
+            {
+              "id": "net-force",
+              "title": "محصلة القوى",
+              "description": "عندما تكون محصلة القوى صفراً لا يوجد تسارع، لكن قد يستمر الجسم في الحركة."
+            }
+          ],
+          "questions": [
+            {
+              "id": "balanced-forces-check",
+              "kind": "choice",
+              "text": "جسم متحرك محصلة القوى عليه صفر. ماذا يحدث لسرعته المتجهة؟",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "تبقى ثابتة"
+                },
+                {
+                  "id": "other",
+                  "text": "يجب أن يتوقف فوراً"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "فكر هل يوجد تسارع.",
+                "يتطلب التسارع محصلة قوى غير صفرية.",
+                "عندما تكون المحصلة صفراً تبقى السرعة المتجهة ثابتة."
+              ],
+              "explanation": "عندما تكون محصلة القوى صفراً لا يوجد تسارع، لكن قد يستمر الجسم في الحركة.",
+              "concept_ref": "net-force"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "kinetic-energy",
+      "chapter_id": "energy",
+      "content": {
+        "subject_id": "physics",
+        "chapter_id": "energy",
+        "en": {
+          "title": "Kinetic Energy",
+          "subject": "Physics",
+          "chapter": "Energy",
+          "objective": "Identify kinetic energy as the energy of motion.",
+          "key_points": [
+            "Moving objects have kinetic energy.",
+            "At the same mass, faster objects have more kinetic energy."
+          ],
+          "concept_refs": [
+            {
+              "id": "kinetic-energy",
+              "title": "Kinetic energy",
+              "description": "Kinetic energy is the energy an object has because it is moving."
+            }
+          ],
+          "questions": [
+            {
+              "id": "kinetic-energy-check",
+              "kind": "choice",
+              "text": "Which object has kinetic energy?",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "A rolling ball"
+                },
+                {
+                  "id": "other",
+                  "text": "A stationary ball"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "Look for motion.",
+                "Kinetic energy depends on movement.",
+                "The rolling ball is moving and has kinetic energy."
+              ],
+              "explanation": "Kinetic energy is the energy an object has because it is moving.",
+              "concept_ref": "kinetic-energy"
+            }
+          ]
+        },
+        "ar": {
+          "title": "الطاقة الحركية",
+          "subject": "الفيزياء",
+          "chapter": "الطاقة",
+          "objective": "التعرف على الطاقة الحركية بوصفها طاقة الحركة.",
+          "key_points": [
+            "للأجسام المتحركة طاقة حركية.",
+            "عند ثبات الكتلة تزداد الطاقة الحركية بزيادة السرعة."
+          ],
+          "concept_refs": [
+            {
+              "id": "kinetic-energy",
+              "title": "الطاقة الحركية",
+              "description": "الطاقة الحركية هي الطاقة التي يمتلكها الجسم بسبب حركته."
+            }
+          ],
+          "questions": [
+            {
+              "id": "kinetic-energy-check",
+              "kind": "choice",
+              "text": "أي جسم يمتلك طاقة حركية؟",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "كرة تتدحرج"
+                },
+                {
+                  "id": "other",
+                  "text": "كرة ساكنة"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "ابحث عن الحركة.",
+                "ترتبط الطاقة الحركية بالحركة.",
+                "الكرة المتدحرجة تتحرك وتمتلك طاقة حركية."
+              ],
+              "explanation": "الطاقة الحركية هي الطاقة التي يمتلكها الجسم بسبب حركته.",
+              "concept_ref": "kinetic-energy"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "equivalent-fractions",
+      "chapter_id": "fractions",
+      "content": {
+        "subject_id": "mathematics",
+        "chapter_id": "fractions",
+        "en": {
+          "title": "Equivalent Fractions",
+          "subject": "Mathematics",
+          "chapter": "Fractions",
+          "objective": "Recognize different fractions that represent the same amount.",
+          "key_points": [
+            "Equivalent fractions have the same value.",
+            "Multiply numerator and denominator by the same nonzero number."
+          ],
+          "concept_refs": [
+            {
+              "id": "equivalent-fractions",
+              "title": "Equivalent fractions",
+              "description": "Multiplying the numerator and denominator by the same nonzero number preserves a fraction’s value."
+            }
+          ],
+          "questions": [
+            {
+              "id": "equivalent-fractions-check",
+              "kind": "choice",
+              "text": "Which fraction is equivalent to 1/2?",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "2/4"
+                },
+                {
+                  "id": "other",
+                  "text": "1/4"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "Try multiplying both parts by the same number.",
+                "Multiply the numerator and denominator by two.",
+                "1 × 2 = 2 and 2 × 2 = 4, so 2/4 equals 1/2."
+              ],
+              "explanation": "Multiplying the numerator and denominator by the same nonzero number preserves a fraction’s value.",
+              "concept_ref": "equivalent-fractions"
+            }
+          ]
+        },
+        "ar": {
+          "title": "الكسور المتكافئة",
+          "subject": "الرياضيات",
+          "chapter": "الكسور",
+          "objective": "التعرف على كسور مختلفة تمثل المقدار نفسه.",
+          "key_points": [
+            "الكسور المتكافئة لها القيمة نفسها.",
+            "نضرب البسط والمقام في العدد غير الصفري نفسه."
+          ],
+          "concept_refs": [
+            {
+              "id": "equivalent-fractions",
+              "title": "الكسور المتكافئة",
+              "description": "ضرب البسط والمقام في العدد غير الصفري نفسه يحافظ على قيمة الكسر."
+            }
+          ],
+          "questions": [
+            {
+              "id": "equivalent-fractions-check",
+              "kind": "choice",
+              "text": "أي كسر يكافئ ١/٢؟",
+              "options": [
+                {
+                  "id": "correct",
+                  "text": "٢/٤"
+                },
+                {
+                  "id": "other",
+                  "text": "١/٤"
+                }
+              ],
+              "answer": "correct",
+              "hints": [
+                "جرب ضرب البسط والمقام في العدد نفسه.",
+                "اضرب البسط والمقام في اثنين.",
+                "١ × ٢ = ٢ و٢ × ٢ = ٤، لذا ٢/٤ يكافئ ١/٢."
+              ],
+              "explanation": "ضرب البسط والمقام في العدد غير الصفري نفسه يحافظ على قيمة الكسر.",
+              "concept_ref": "equivalent-fractions"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

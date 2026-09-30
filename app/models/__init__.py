@@ -9,6 +9,15 @@ from app.models.homework import (
     HomeworkQuestion,
     StudentAssignment,
     HomeworkAttempt,
+    HomeworkHintReveal,
+)
+from app.models.review import (
+    ReviewSubject,
+    ReviewChapter,
+    ReviewLesson,
+    ReviewSession,
+    ReviewAttempt,
+    ReviewSessionSummary,
 )
 
 __all__ = [
@@ -26,4 +35,11 @@ __all__ = [
     "HomeworkQuestion",
     "StudentAssignment",
     "HomeworkAttempt",
+    "HomeworkHintReveal",
+    "ReviewSubject",
+    "ReviewChapter",
+    "ReviewLesson",
+    "ReviewSession",
+    "ReviewAttempt",
+    "ReviewSessionSummary",
 ]

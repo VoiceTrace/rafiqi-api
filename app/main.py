@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, homework, study_sessions, users
+from app.api.routes import auth, homework, review, study_sessions, users
 from app.core.config import settings
 
 description = """
@@ -131,7 +131,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -141,6 +141,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(study_sessions.router)
 app.include_router(homework.router)
+app.include_router(review.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
