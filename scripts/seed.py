@@ -8,6 +8,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from app.core.config import settings
 from app.services.review_catalog import seed_catalog
@@ -26,6 +27,19 @@ async def seed():
         if "--catalog-only" in sys.argv:
             print("Catalog seed complete (existing rows preserved).")
             return
+
+        # Idempotent: safe to re-run against a DB that's already seeded.
+        existing = await db.execute(
+            select(User).where(User.email == "teacher@alnoor.edu.sa")
+        )
+        existing_teacher = existing.scalar_one_or_none()
+        if existing_teacher is not None:
+            print("\n--- Already seeded, nothing to do ---")
+            print(f"School:  {existing_teacher.school_id}")
+            print("Teacher: teacher@alnoor.edu.sa / teacher123")
+            print("Student: student@alnoor.edu.sa / student123")
+            return
+
         # School
         school = School(id=uuid.uuid4(), name="Al-Noor Academy")
         db.add(school)
