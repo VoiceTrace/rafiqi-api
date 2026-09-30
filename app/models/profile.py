@@ -66,12 +66,13 @@ class ProfileCard(Base):
     by the API layer (see app/services/profile.py), not stored as an empty
     row here.
 
-    confidence_score is internal only (0.0-1.0) — used purely to decide how
-    much a single extraction pass is allowed to move an established
-    reading (see app/services/profile_extraction.py). Never exposed via
-    the API: the frontend gets exactly {id, icon, title, captures,
-    reading} per card, no score, no confidence label, per the explicit
-    "extract this and only this" contract.
+    confidence_score (0.0-1.0) drives how much a single extraction pass is
+    allowed to move an established reading (see
+    app/services/profile_extraction.py) AND the qualitative `confidence`
+    label the API exposes ("low" / "quiet" / "confident" — see
+    app/schemas/profile.py's confidence_level_from_score). The raw float
+    itself is never sent to the frontend, only the derived label — the A6
+    disclosure rule bans numeric scores, not a narrative-friendly tier.
     """
 
     __tablename__ = "profile_cards"

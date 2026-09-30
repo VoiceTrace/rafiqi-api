@@ -23,8 +23,10 @@ async def get_my_profile(
     The student's own learner profile — always exactly the 7 fixed cards
     (How you learn, Where you are, What drives you, How you feel, Your
     study habits, Language & company, Your world), each with a `reading`
-    that's null until something real has been extracted for it. Per the A6
-    disclosure rule, no numeric score or confidence label is ever included.
+    and a `confidence` ("low" / "quiet" / "confident") that are both null
+    until something real has been extracted for that card. Per the A6
+    disclosure rule, `confidence` is always this qualitative label — never
+    the raw numeric score.
 
     Student access only.
     """

@@ -68,11 +68,31 @@ CARD_KEY_BY_ID: dict[int, CardKey] = {
 # ---------------------------------------------------------------------------
 # A6 — student-facing view.
 #
-# Exactly the frontend contract, nothing else: id, icon, title, captures,
-# reading. No numeric score, no confidence label — per the explicit
-# "extract this and only this" spec. Never widen this without a new,
-# explicit decision to do so.
+# id, icon, title, captures, reading, confidence. `confidence` is a
+# qualitative label derived from the internal confidence_score, never the
+# raw float — compliant with the A6 disclosure rule (docs/artifact.md §1):
+# "no numeric trait scores, no comparative framing". A three-tier label is
+# narrative, not a score.
 # ---------------------------------------------------------------------------
+
+class ConfidenceLevel(StrEnum):
+    LOW = "low"
+    QUIET = "quiet"
+    CONFIDENT = "confident"
+
+
+# Two cutoffs on the internal 0.0-1.0 confidence_score, never sent as-is.
+_QUIET_THRESHOLD = 0.4
+_CONFIDENT_THRESHOLD = 0.7
+
+
+def confidence_level_from_score(score: float) -> ConfidenceLevel:
+    if score >= _CONFIDENT_THRESHOLD:
+        return ConfidenceLevel.CONFIDENT
+    if score >= _QUIET_THRESHOLD:
+        return ConfidenceLevel.QUIET
+    return ConfidenceLevel.LOW
+
 
 class LearnerCardOut(BaseModel):
     id: int
@@ -83,6 +103,12 @@ class LearnerCardOut(BaseModel):
         default=None,
         description="Null until the first extraction pass produces real signal for this "
         "card — the normal 'still getting to know you' state, not an error.",
+    )
+    confidence: ConfidenceLevel | None = Field(
+        default=None,
+        description="How established this reading is — 'low', 'quiet', or 'confident'. "
+        "Null exactly when `reading` is null (nothing extracted yet). Never a raw "
+        "numeric score.",
     )
 
 

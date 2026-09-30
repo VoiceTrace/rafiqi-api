@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ErrorCode
 from app.models.profile import ProfileCard, ProfileCardCorrection, StudentProfile
-from app.schemas.profile import CARD_DEFINITIONS, CARD_KEY_BY_ID, CardKey, LearnerCardOut, LearnerModelOut
+from app.schemas.profile import (
+    CARD_DEFINITIONS,
+    CARD_KEY_BY_ID,
+    CardKey,
+    LearnerCardOut,
+    LearnerModelOut,
+    confidence_level_from_score,
+)
 from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,7 @@ def card_to_out(card: ProfileCard) -> LearnerCardOut:
         title=definition.title,
         captures=definition.captures,
         reading=card.reading,
+        confidence=confidence_level_from_score(card.confidence_score),
     )
 
 
@@ -71,17 +79,21 @@ async def get_own_profile_view(
 
     cards = []
     for card_key in CardKey:  # fixed display order, ids 1-7
-        definition = CARD_DEFINITIONS[card_key]
         existing = existing_by_key.get(card_key.value)
-        cards.append(
-            LearnerCardOut(
-                id=definition.id,
-                icon=definition.icon,
-                title=definition.title,
-                captures=definition.captures,
-                reading=existing.reading if existing else None,
+        if existing is not None:
+            cards.append(card_to_out(existing))
+        else:
+            definition = CARD_DEFINITIONS[card_key]
+            cards.append(
+                LearnerCardOut(
+                    id=definition.id,
+                    icon=definition.icon,
+                    title=definition.title,
+                    captures=definition.captures,
+                    reading=None,
+                    confidence=None,
+                )
             )
-        )
     return LearnerModelOut(cards=cards)
 
 
