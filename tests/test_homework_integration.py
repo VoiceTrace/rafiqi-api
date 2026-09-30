@@ -17,7 +17,6 @@ from app.api.deps import get_db_session
 from app.core.security import create_access_token
 from app.main import app
 from app.models.school import School
-from app.models.study_session import MasteryRecord
 from app.models.user import User
 
 

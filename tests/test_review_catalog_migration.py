@@ -58,7 +58,10 @@ def test_catalog_migration_preserves_existing_session(monkeypatch):
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
         assert db.scalar(text("select to_regclass('review_session_summaries')")) == "review_session_summaries"
-    command.downgrade(config, "-1")
+    # Downgrade to the revision just before the D6 summaries migration. Pinning the
+    # target rather than using "-1" keeps this asserting "D6 is reversible" even when
+    # a branch stacks further migrations on top of it.
+    command.downgrade(config, "6d9fe6080e14")
     with engine.connect() as db:
         assert db.scalar(text("select to_regclass('review_session_summaries')")) is None
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"

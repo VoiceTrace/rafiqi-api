@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, homework, review, study_sessions, users
+from app.api.routes import auth, homework, review, users
 from app.core.config import settings
 
 description = """
@@ -139,8 +139,10 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
-app.include_router(study_sessions.router)
 app.include_router(homework.router)
+# The Epic D1 study-session router is deliberately not mounted: it shares
+# /study-sessions paths with the review companion but has different contracts
+# (see docs/review-companion.md). The review router owns those URLs.
 app.include_router(review.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")

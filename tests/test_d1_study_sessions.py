@@ -9,7 +9,7 @@ Tests cover:
 - Service: advance_stage — valid and invalid transitions (incl. PDPL scope)
 - Service: get_next_question — uses current concept, stores school_id
 - Service: submit_attempt — scoring, hint population, max attempt guard
-- Service: close_session — mastery computation, MasteryRecord upsert
+- Service: close_session — mastery computation for the summary card
 - PDPL isolation: school_id mismatch raises 403/404 in service layer
 - Mastery formula: hint-weighted scoring
 """
@@ -25,7 +25,6 @@ from pydantic import ValidationError
 from app.models.study_session import (
     Attempt,
     MasteryConfidence,
-    MasteryRecord,
     Question,
     SessionStage,
     SessionStatus,
@@ -614,7 +613,7 @@ async def test_close_session_computes_mastery_and_closes():
             # Second call: attempts join query
             mock_result.all.return_value = [(a1, "c1"), (a2, "c1")]
         else:
-            # MasteryRecord lookup — doesn't exist yet
+            # Any further lookups — nothing stored yet
             mock_result.scalar_one_or_none.return_value = None
         mock_result.scalars.return_value.all.return_value = []
         return mock_result

@@ -3,7 +3,7 @@ from app.models.user import User
 from app.models.profile import StudentProfile, ProfileTrait
 from app.models.conversation import Conversation
 from app.models.refresh_token import RefreshToken
-from app.models.study_session import StudySession, Question, Attempt, MasteryRecord
+from app.models.study_session import StudySession, Question, Attempt
 from app.models.homework import (
     HomeworkAssignment,
     HomeworkQuestion,
@@ -12,6 +12,7 @@ from app.models.homework import (
     HomeworkHintReveal,
 )
 from app.models.review import (
+    MasteryRecord,
     ReviewSubject,
     ReviewChapter,
     ReviewLesson,

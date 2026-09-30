@@ -28,7 +28,7 @@ from app.models.homework import (
     StudentAssignment,
     StudentAssignmentStatus,
 )
-from app.models.study_session import MasteryRecord
+from app.models.review import MasteryRecord, ReviewChapter, ReviewLesson
 from app.schemas.homework import (
     AddQuestionRequest,
     AnswerInput,
@@ -605,11 +605,26 @@ async def get_gap_digest(
             gaps=[],
         )
 
-    # pull MasteryRecords for these students for this lesson
+    # Mastery is stored per subject + concept by the review flow, so resolve the
+    # assignment's lesson to its subject and restrict to that lesson's concepts.
+    # A lesson outside the review catalog has no mastery evidence to aggregate.
+    lesson_row = await db.get(ReviewLesson, a.lesson_id)
+    if lesson_row is None:
+        return GapDigestRead(
+            lesson_id=a.lesson_id,
+            student_coverage=0,
+            total_students=total,
+            coverage_sufficient=False,
+            gaps=[],
+        )
+    chapter = await db.get(ReviewChapter, lesson_row.chapter_id)
+    concept_refs = [ref["id"] for ref in lesson_row.content["en"]["concept_refs"]]
+
     mr_stmt = select(MasteryRecord).where(
         MasteryRecord.school_id == school_id,
-        MasteryRecord.lesson_id == a.lesson_id,
+        MasteryRecord.subject_id == chapter.subject_id,
         MasteryRecord.student_id.in_(student_ids),
+        MasteryRecord.concept_ref.in_(concept_refs),
     )
     mr_result = await db.execute(mr_stmt)
     records = mr_result.scalars().all()
@@ -618,7 +633,7 @@ async def get_gap_digest(
     concept_data: dict[str, list[float]] = {}
     students_with_data: set[uuid.UUID] = set()
     for r in records:
-        concept_data.setdefault(r.concept_ref, []).append(r.mastery_level)
+        concept_data.setdefault(r.concept_ref, []).append(r.mastery_score)
         students_with_data.add(r.student_id)
 
     coverage = len(students_with_data)

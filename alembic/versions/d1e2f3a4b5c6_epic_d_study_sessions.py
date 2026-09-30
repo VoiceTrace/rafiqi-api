@@ -1,4 +1,4 @@
-"""Epic D — study_sessions, questions, attempts, mastery_records
+"""Epic D — study_sessions, questions, attempts
 
 Revision ID: d1e2f3a4b5c6
 Revises: d4e6a2c9f1b7
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d1e2f3a4b5c6"
-down_revision: Union[str, None] = "d4e6a2c9f1b7"
+down_revision: Union[str, None] = "83bcb2215849"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -104,40 +104,9 @@ def upgrade() -> None:
     op.create_index("ix_attempts_question_id", "attempts", ["question_id"])
     op.create_index("ix_attempts_student_id", "attempts", ["student_id"])
 
-    # mastery_records
-    op.create_table(
-        "mastery_records",
-        sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("school_id", sa.UUID(), nullable=False),
-        sa.Column("student_id", sa.UUID(), nullable=False),
-        sa.Column("lesson_id", sa.String(length=100), nullable=False),
-        sa.Column("concept_ref", sa.String(length=200), nullable=False),
-        sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("correct_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("mastery_level", sa.Float(), nullable=False, server_default="0.0"),
-        sa.Column("dominant_error_type", sa.String(length=50), nullable=True),
-        sa.Column("confidence", sa.String(length=20), nullable=False, server_default="forming"),
-        sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["school_id"], ["schools.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["student_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "school_id", "student_id", "lesson_id", "concept_ref",
-            name="uq_mastery_student_lesson_concept",
-        ),
-    )
-    op.create_index("ix_mastery_records_school_id", "mastery_records", ["school_id"])
-    op.create_index("ix_mastery_records_student_id", "mastery_records", ["student_id"])
 
 
 def downgrade() -> None:
-    op.drop_table("mastery_records")
     op.drop_table("attempts")
     op.drop_table("questions")
     op.drop_table("study_sessions")

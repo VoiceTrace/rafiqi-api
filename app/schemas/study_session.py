@@ -96,20 +96,5 @@ class ExplanationRead(BaseModel):
     explanation_text: str
 
 
-class MasteryRecordRead(BaseModel):
-    id: uuid.UUID
-    lesson_id: str
-    concept_ref: str
-    attempt_count: int
-    correct_count: int
-    mastery_level: float
-    dominant_error_type: str | None
-    confidence: str
-    last_attempt_at: datetime | None
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class SessionWithQuestions(SessionRead):
     questions: list[QuestionRead] = []

@@ -14,8 +14,7 @@ from app.schemas.study_session import (
     CreateSessionRequest,
     ExplainRequest,
     ExplanationRead,
-    MasteryRecordRead,
-    PlanSessionRequest,
+        PlanSessionRequest,
     QuestionRead,
     SessionRead,
     SessionWithQuestions,
@@ -39,27 +38,6 @@ async def create_session(
         db=db,
     )
     return SessionRead.model_validate(session)
-
-
-# NOTE: /me/mastery must be declared before /{session_id} to avoid "me" being
-# interpreted as a UUID session_id
-@router.get(
-    "/me/mastery",
-    response_model=list[MasteryRecordRead],
-    summary="Get my mastery records (optionally filtered by lesson_id)",
-)
-async def get_my_mastery(
-    current_user: Annotated[CurrentUser, Depends(require_student)],
-    db: AsyncSession = Depends(get_db_session),
-    lesson_id: str | None = Query(default=None),
-) -> list[MasteryRecordRead]:
-    records = await svc.list_mastery_records(
-        school_id=current_user.school_id,
-        student_id=current_user.id,
-        db=db,
-        lesson_id=lesson_id,
-    )
-    return [MasteryRecordRead.model_validate(r) for r in records]
 
 
 @router.get(

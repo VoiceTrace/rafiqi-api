@@ -19,7 +19,6 @@ from app.core.errors import ErrorCode
 from app.models.study_session import (
     Attempt,
     MasteryConfidence,
-    MasteryRecord,
     Question,
     SessionStage,
     SessionStatus,
@@ -419,7 +418,7 @@ async def close_session(
     rafiqi: RafiqiInterface | None = None,
 ) -> StudySession:
     """
-    D6: aggregate mastery, upsert MasteryRecords, generate summary, close session.
+    D6: aggregate mastery, generate summary, close session.
     All queries scoped to school_id.
     """
     if rafiqi is None:
@@ -452,38 +451,14 @@ async def close_session(
 
     for concept_ref, attempts in by_concept.items():
         mastery_level, attempt_count, correct_count, dominant_error = _compute_mastery(attempts)
-        confidence = _mastery_confidence(mastery_level)
         last_at = max(a.created_at for a in attempts)
 
         mastery_by_concept[concept_ref] = mastery_level
         error_summary[concept_ref] = dominant_error
 
-        # Upsert MasteryRecord — scoped to school_id + student_id (PDPL)
-        existing_result = await db.execute(
-            select(MasteryRecord).where(
-                MasteryRecord.school_id == school_id,
-                MasteryRecord.student_id == student_id,
-                MasteryRecord.lesson_id == session.lesson_id,
-                MasteryRecord.concept_ref == concept_ref,
-            )
-        )
-        record = existing_result.scalar_one_or_none()
-
-        if record is None:
-            record = MasteryRecord(
-                school_id=school_id,
-                student_id=student_id,
-                lesson_id=session.lesson_id,
-                concept_ref=concept_ref,
-            )
-            db.add(record)
-
-        record.attempt_count = attempt_count
-        record.correct_count = correct_count
-        record.mastery_level = mastery_level
-        record.dominant_error_type = dominant_error
-        record.confidence = confidence
-        record.last_attempt_at = last_at
+        # Mastery is owned by the review flow (app/services/review.py), which
+        # recalculates it per answer. The per-concept figures computed above still
+        # feed the session summary below.
 
     # Generate summary card
     summary = await rafiqi.generate_summary(
@@ -505,20 +480,3 @@ async def close_session(
     await db.commit()
     await db.refresh(session)
     return session
-
-
-async def list_mastery_records(
-    school_id: uuid.UUID,
-    student_id: uuid.UUID,
-    db: AsyncSession,
-    lesson_id: str | None = None,
-) -> list[MasteryRecord]:
-    stmt = select(MasteryRecord).where(
-        MasteryRecord.school_id == school_id,   # PDPL scope
-        MasteryRecord.student_id == student_id,
-    )
-    if lesson_id:
-        stmt = stmt.where(MasteryRecord.lesson_id == lesson_id)
-    stmt = stmt.order_by(MasteryRecord.updated_at.desc())
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
