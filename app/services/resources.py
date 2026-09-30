@@ -167,6 +167,41 @@ async def list_student_materials(db, school_id, student_id, lesson_id, locale):
         "required": assignment.required, "completed": bool(completed)} for assignment, resource, completed in rows]
 
 
+async def list_student_resources(db, school_id, student_id, locale):
+    query = (select(LessonMaterial, TeacherResource, MaterialCompletion.completed, TeacherClass, ReviewGrade,
+                    ReviewLesson, ReviewChapter, ReviewSubject)
+        .join(TeacherClassStudent, TeacherClassStudent.class_id == LessonMaterial.class_id)
+        .join(TeacherClass, TeacherClass.id == LessonMaterial.class_id)
+        .join(ReviewGrade, ReviewGrade.id == TeacherClass.grade_id)
+        .join(TeacherResource, TeacherResource.id == LessonMaterial.resource_id)
+        .join(ReviewLesson, ReviewLesson.id == LessonMaterial.lesson_id)
+        .join(ReviewChapter, ReviewChapter.id == ReviewLesson.chapter_id)
+        .join(ReviewSubject, ReviewSubject.id == ReviewChapter.subject_id)
+        .outerjoin(MaterialCompletion, (MaterialCompletion.lesson_material_id == LessonMaterial.id) &
+                   (MaterialCompletion.student_id == student_id) & (MaterialCompletion.school_id == school_id))
+        .where(LessonMaterial.school_id == school_id, TeacherClassStudent.school_id == school_id,
+               TeacherClassStudent.student_id == student_id, TeacherClass.school_id == school_id,
+               TeacherResource.school_id == school_id, TeacherResource.archived_at.is_(None))
+        .order_by(ReviewSubject.id, ReviewChapter.id, ReviewLesson.id, TeacherClass.name, LessonMaterial.created_at))
+    rows = (await db.execute(query)).all()
+    result = []
+    for assignment, resource, completed, class_row, grade, lesson, chapter, subject in rows:
+        lesson_content = lesson.content.get(locale, lesson.content.get("en", {}))
+        result.append({
+            "id": assignment.id, "lesson_id": lesson.id, "type": resource.type, "title": resource.title,
+            "description": resource.description, "question": resource.question, "source_url": resource.source_url,
+            "download_url": f"/study-materials/{assignment.id}/download" if resource.storage_name else None,
+            "original_filename": resource.original_filename, "media_type": resource.media_type,
+            "byte_size": resource.byte_size, "required": assignment.required, "completed": bool(completed),
+            "grade_id": grade.id, "grade_title": grade.title.get(locale, grade.title.get("en", "")),
+            "class_id": class_row.id, "class_name": class_row.name,
+            "subject_id": subject.id, "subject_title": subject.title.get(locale, subject.title.get("en", "")),
+            "chapter_id": chapter.id, "chapter_title": chapter.title.get(locale, chapter.title.get("en", "")),
+            "lesson_title": lesson_content.get("title", lesson.id),
+        })
+    return result
+
+
 async def set_completion(db, school_id, student_id, lesson_id, assignment_id, completed):
     assignment = await db.scalar(select(LessonMaterial).join(TeacherClassStudent, TeacherClassStudent.class_id == LessonMaterial.class_id)
         .where(LessonMaterial.id == assignment_id, LessonMaterial.lesson_id == lesson_id, LessonMaterial.school_id == school_id,

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, get_current_user, get_db_session, require_student, require_teacher
 from app.core.config import settings
 from app.core.errors import ErrorCode
-from app.schemas.resources import AssignmentCreate, ClassCreate, CompletionUpdate, ResourceCreate, ResourceOut
+from app.schemas.resources import AssignmentCreate, ClassCreate, CompletionUpdate, ResourceCreate, ResourceOut, StudentResourceOut
 from app.services import resources as svc
 
 router = APIRouter(tags=["teacher-resources"])
@@ -84,6 +84,10 @@ async def assign(body: AssignmentCreate, user: Teacher, db: Db):
 @router.get("/study-lessons/{lesson_id}/materials")
 async def student_materials(lesson_id: str, user: Student, db: Db, locale: str = "en"):
     return await svc.list_student_materials(db, user.school_id, user.id, lesson_id, locale if locale in ("en", "ar") else "en")
+
+@router.get("/student/resources", response_model=list[StudentResourceOut])
+async def student_resources(user: Student, db: Db, locale: str = "en") -> list[StudentResourceOut]:
+    return await svc.list_student_resources(db, user.school_id, user.id, locale if locale in ("en", "ar") else "en")
 
 @router.put("/study-lessons/{lesson_id}/materials/{assignment_id}/completion")
 async def completion(lesson_id: str, assignment_id: uuid.UUID, body: CompletionUpdate, user: Student, db: Db):

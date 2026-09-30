@@ -70,6 +70,17 @@ class StudentMaterialOut(BaseModel):
     required: bool
     completed: bool
 
+class StudentResourceOut(StudentMaterialOut):
+    grade_id: str
+    grade_title: str
+    class_id: uuid.UUID
+    class_name: str
+    subject_id: str
+    subject_title: str
+    chapter_id: str
+    chapter_title: str
+    lesson_title: str
+
 class CompletionUpdate(BaseModel):
     completed: bool
 
