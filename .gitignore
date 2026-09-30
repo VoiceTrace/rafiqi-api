@@ -11,3 +11,4 @@ build/
 # Uploaded media — keep directory structure, ignore actual files
 media/avatars/*
 !media/avatars/.gitkeep
+private_resources/
