@@ -209,6 +209,37 @@ async def test_get_active_conversation_resumes_recent_conversation():
 
 
 @pytest.mark.asyncio
+async def test_get_active_conversation_force_fresh_starts_new_even_if_still_active():
+    """The explicit 'start over' path: a conversation well within the 12h
+    window would normally be resumed, but force_fresh=True should treat it
+    like a dormant one instead — force-extract it, then start fresh."""
+    still_active = _fake_conversation()
+    recent_message = _fake_message(datetime.now(timezone.utc) - timedelta(hours=2))
+    student_id, school_id = still_active.student_id, still_active.school_id
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+
+    with (
+        patch(
+            "app.services.cave._most_recently_active",
+            new=AsyncMock(return_value=(still_active, recent_message)),
+        ),
+        patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)) as mock_extract,
+        patch("app.services.cave._existing_cards", new=AsyncMock(return_value=[])),
+        patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Starting fresh!")) as mock_chat,
+    ):
+        conversation, message, is_new = await cave_svc.get_active_conversation(
+            student_id, school_id, "Ahmed", mock_db, force_fresh=True,
+        )
+
+    mock_extract.assert_awaited_once_with(still_active, mock_db, force=True)
+    mock_chat.assert_awaited_once()
+    assert is_new is True
+    assert message.content == "Starting fresh!"
+    assert conversation is not still_active
+
+
+@pytest.mark.asyncio
 async def test_get_active_conversation_starts_fresh_when_dormant():
     """Most recent conversation's last message is >12h old — starts a new
     conversation, but first force-extracts whatever's unprocessed in the

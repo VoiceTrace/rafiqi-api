@@ -24,6 +24,18 @@ class CaveMessageIn(BaseModel):
     content: str = Field(..., min_length=1, max_length=4000)
 
 
+class StartConversationIn(BaseModel):
+    fresh: bool = Field(
+        default=False,
+        description="True forces a brand-new conversation even if the student's current "
+        "one is still active (< 12h old) — for an explicit 'start over' action, as "
+        "opposed to a plain app-open which should omit this field entirely and resume "
+        "whatever's active. The old active conversation's unprocessed messages are "
+        "still folded into a profile update first, same as when one goes dormant on "
+        "its own — nothing is lost by starting fresh early.",
+    )
+
+
 class CaveMessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -13,6 +13,7 @@ from app.schemas.cave import (
     ConversationSummaryOut,
     FlaggedMessageOut,
     SendMessageOut,
+    StartConversationIn,
 )
 from app.services import cave as cave_svc
 from app.services import profile as profile_svc
@@ -32,6 +33,7 @@ async def start_conversation(
     response: Response,
     current_user: Annotated[CurrentUser, Depends(require_student)],
     db: AsyncSession = Depends(get_db_session),
+    body: StartConversationIn | None = None,
 ) -> ConversationStartOut:
     """
     Returns the student's active conversation if one exists — the one with
@@ -39,17 +41,24 @@ async def start_conversation(
     /conversations/{id} for its full history). Otherwise starts a fresh one
     and returns Rafiqi's opening message (`is_new: true`, `201`).
 
+    Pass `{"fresh": true}` to force a brand-new conversation even if one is
+    still active — an explicit "start over" action. Omit the body entirely
+    (or send `{"fresh": false}`) for a plain app-open, which should resume
+    whatever's active. Either way, the conversation left behind has any
+    unprocessed messages swept into a profile update first, so nothing from
+    it is lost — this applies whether it went dormant on its own or the
+    student chose to start fresh early.
+
     Every conversation stays individually resumable at any time regardless
     (see GET /conversations, POST /conversations/{id}/messages) — this only
-    decides what a plain "open the Cave" visit lands on. A dormant
-    conversation left behind by this call has any unprocessed messages
-    swept into a profile update first, so nothing from it is lost.
+    decides what a plain "open the Cave" visit lands on.
 
     Student access only.
     """
     student = await user_svc.get_me(current_user.id, db)
     conversation, message, is_new = await cave_svc.get_active_conversation(
-        current_user.id, current_user.school_id, student.full_name, db
+        current_user.id, current_user.school_id, student.full_name, db,
+        force_fresh=body.fresh if body else False,
     )
     response.status_code = status.HTTP_201_CREATED if is_new else status.HTTP_200_OK
     return ConversationStartOut(

@@ -236,15 +236,22 @@ async def list_conversations(
 
 
 async def get_active_conversation(
-    student_id: uuid.UUID, school_id: uuid.UUID, student_name: str, db: AsyncSession
+    student_id: uuid.UUID, school_id: uuid.UUID, student_name: str, db: AsyncSession,
+    *, force_fresh: bool = False,
 ) -> tuple[Conversation, ConversationMessage, bool]:
     """
     Returns the student's active conversation: the one with the most recent
     message, if that message is less than `_ACTIVE_WINDOW` old — resumed
     as-is, no new LLM call. Otherwise starts a fresh conversation, first
-    force-running extraction on whatever's unprocessed in the dormant one so
-    a short conversation that never reached the 20-turn threshold still
-    isn't lost (there's no /end to guarantee that anymore).
+    force-running extraction on whatever's unprocessed in the old one so a
+    short conversation that never reached the 20-turn threshold still isn't
+    lost (there's no /end to guarantee that anymore).
+
+    `force_fresh=True` makes a still-active conversation behave like a
+    dormant one — used when the student explicitly asks to start over
+    rather than continue their current thread. Same force-extract-first
+    treatment either way, so an early "start fresh" doesn't reintroduce the
+    lost-short-conversation problem this ticket already solved for timeouts.
 
     Every past conversation stays directly resumable regardless of this
     choice — it only decides what a plain "open the Cave" visit lands on.
@@ -257,7 +264,8 @@ async def get_active_conversation(
     most_recent = await _most_recently_active(student_id, school_id, db)
     if most_recent is not None:
         conversation, last_message = most_recent
-        if datetime.now(timezone.utc) - last_message.created_at < _ACTIVE_WINDOW:
+        is_within_window = datetime.now(timezone.utc) - last_message.created_at < _ACTIVE_WINDOW
+        if is_within_window and not force_fresh:
             return conversation, last_message, False
         await _maybe_extract(conversation, db, force=True)
 
