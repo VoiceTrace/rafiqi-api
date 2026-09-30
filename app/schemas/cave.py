@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.profile import StudentTraitCardOut
+from app.schemas.profile import LearnerCardOut
 
 
 class MessageRole(StrEnum):
@@ -49,12 +49,12 @@ class ConversationStartOut(BaseModel):
 
 class SendMessageOut(BaseModel):
     message: CaveMessageOut
-    updated_traits: list[StudentTraitCardOut] | None = Field(
+    updated_cards: list[LearnerCardOut] | None = Field(
         default=None,
         description="A3 runs automatically roughly every 20 messages in a "
         "conversation, not on every turn — populated only on the turn that "
-        "actually triggered it (or null). Same narrative-only shape as A6's "
-        "GET /profiles/me, no `score` field.",
+        "actually triggered it (or null). Same shape as A6's GET "
+        "/profiles/me cards, no score/confidence field.",
     )
 
 

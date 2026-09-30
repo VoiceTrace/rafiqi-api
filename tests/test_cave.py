@@ -12,8 +12,8 @@ Tests cover:
 - get_owned_conversation: cross-tenant isolation (wrong school_id -> 404)
 - _maybe_extract: triggers at the turn-count threshold (or when forced),
   advances its checkpoint only when extraction actually completed
-- profile_extraction.extract_and_merge: creates a new trait, merges into an
-  existing one via the score-clamp rule, respects message_offset, and
+- profile_extraction.extract_and_merge: creates a new card, merges into an
+  existing one via the confidence-clamp rule, respects message_offset, and
   distinguishes "completed with nothing" ([]) from "failed" (None)
 """
 import json
@@ -26,8 +26,8 @@ from fastapi import HTTPException
 
 from app.models.conversation import Conversation
 from app.models.message import ConversationMessage, MessageRole, SafetyCategory
-from app.models.profile import ConfidenceLabel, ProfileTrait
-from app.schemas.profile import CONFIDENCE_THRESHOLD, TraitCategory, TraitKey
+from app.models.profile import ProfileCard
+from app.schemas.profile import CardKey
 from app.services import cave as cave_svc
 from app.services import profile_extraction
 from app.services.llm import LLMError
@@ -147,7 +147,7 @@ async def test_post_message_clear_calls_chat_model():
 
     with (
         patch("app.services.cave.classify_message", new=AsyncMock(return_value=None)),
-        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._existing_cards", new=AsyncMock(return_value=[])),
         patch("app.services.cave._recent_messages", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Tell me more!")) as mock_chat,
         patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)),
@@ -169,11 +169,11 @@ async def test_post_message_surfaces_extraction_when_it_runs():
     convo = _fake_conversation()
     mock_db = AsyncMock()
     mock_db.add = MagicMock()
-    sentinel_traits = [MagicMock(spec=ProfileTrait)]
+    sentinel_traits = [MagicMock(spec=ProfileCard)]
 
     with (
         patch("app.services.cave.classify_message", new=AsyncMock(return_value=None)),
-        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._existing_cards", new=AsyncMock(return_value=[])),
         patch("app.services.cave._recent_messages", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Tell me more!")),
         patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=sentinel_traits)) as mock_extract,
@@ -222,7 +222,7 @@ async def test_get_active_conversation_starts_fresh_when_dormant():
     with (
         patch("app.services.cave._most_recently_active", new=AsyncMock(return_value=(dormant, old_message))),
         patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)) as mock_extract,
-        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._existing_cards", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Hey there!")) as mock_chat,
     ):
         conversation, message, is_new = await cave_svc.get_active_conversation(
@@ -245,7 +245,7 @@ async def test_get_active_conversation_creates_fresh_when_none_exist():
 
     with (
         patch("app.services.cave._most_recently_active", new=AsyncMock(return_value=None)),
-        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._existing_cards", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Hey there!")) as mock_chat,
     ):
         conversation, message, is_new = await cave_svc.get_active_conversation(
@@ -339,7 +339,7 @@ async def test_maybe_extract_does_nothing_below_threshold():
 async def test_maybe_extract_triggers_at_threshold_and_advances_checkpoint():
     convo = _fake_conversation(last_extracted_message_count=0)
     mock_db = AsyncMock()
-    sentinel_traits = [MagicMock(spec=ProfileTrait)]
+    sentinel_traits = [MagicMock(spec=ProfileCard)]
 
     with (
         patch("app.services.cave._message_count", new=AsyncMock(return_value=20)),
@@ -409,21 +409,17 @@ async def test_maybe_extract_nothing_unprocessed_is_a_noop():
 # A3 — profile_extraction.extract_and_merge
 # ---------------------------------------------------------------------------
 
-_TRAIT_KEY = TraitKey.CURIOUS.value
-_CATEGORY = TraitCategory.PREFERENCES.value
+_CARD_KEY = CardKey.HOW_YOU_LEARN.value
 
 
-def _extraction_response(observed_score: float) -> str:
+def _extraction_response(confidence: float) -> str:
     return json.dumps(
         {
             "observations": [
                 {
-                    "trait_key": _TRAIT_KEY,
-                    "category": _CATEGORY,
-                    "observed_score": observed_score,
-                    "title": "Curious",
-                    "description": "Asks a lot of follow-up questions.",
-                    "teaching_tip": "Give them room to go off on tangents.",
+                    "card_key": _CARD_KEY,
+                    "reading": "You learn best by trying things yourself before reading about them.",
+                    "confidence": confidence,
                 }
             ]
         }
@@ -431,22 +427,22 @@ def _extraction_response(observed_score: float) -> str:
 
 
 @pytest.mark.asyncio
-async def test_extract_and_merge_creates_new_trait_when_none_exists():
+async def test_extract_and_merge_creates_new_card_when_none_exists():
     convo = _fake_conversation()
     message = ConversationMessage(
         id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
-        role=MessageRole.STUDENT, content="I always wonder why things work the way they do",
+        role=MessageRole.STUDENT, content="I always figure things out by messing with them first",
     )
 
     messages_result = MagicMock()
     messages_result.scalars.return_value.all.return_value = [message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = None  # no existing profile
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = []  # no existing traits
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = []  # no existing cards
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
     mock_db.add = MagicMock()
 
     with patch(
@@ -455,16 +451,15 @@ async def test_extract_and_merge_creates_new_trait_when_none_exists():
     ):
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
-    added_trait = next(
-        call.args[0] for call in mock_db.add.call_args_list if isinstance(call.args[0], ProfileTrait)
+    added_card = next(
+        call.args[0] for call in mock_db.add.call_args_list if isinstance(call.args[0], ProfileCard)
     )
-    assert added_trait.trait_key == _TRAIT_KEY
-    assert added_trait.score == 0.9
-    assert added_trait.confidence == ConfidenceLabel.CONFIDENT
-    assert added_trait.source_conversation_id == convo.id
+    assert added_card.card_key == _CARD_KEY
+    assert added_card.confidence_score == 0.9
+    assert added_card.source_conversation_id == convo.id
     mock_db.commit.assert_awaited()
-    assert result == [added_trait]
-    mock_db.refresh.assert_awaited_once_with(added_trait)
+    assert result == [added_card]
+    mock_db.refresh.assert_awaited_once_with(added_card)
 
 
 @pytest.mark.asyncio
@@ -486,11 +481,11 @@ async def test_extract_and_merge_respects_message_offset():
     messages_result.scalars.return_value.all.return_value = [old_message, new_message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = None
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = []
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = []
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
     mock_db.add = MagicMock()
 
     with patch(
@@ -505,35 +500,32 @@ async def test_extract_and_merge_respects_message_offset():
 
 
 @pytest.mark.asyncio
-async def test_extract_and_merge_clamps_score_movement_for_existing_trait():
+async def test_extract_and_merge_clamps_confidence_movement_for_existing_card():
     convo = _fake_conversation()
     message = ConversationMessage(
         id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
-        role=MessageRole.STUDENT, content="I always wonder why things work the way they do",
+        role=MessageRole.STUDENT, content="I always figure things out by messing with them first",
     )
-    existing_trait = ProfileTrait(
+    existing_card = ProfileCard(
         id=uuid.uuid4(),
         school_id=convo.school_id,
         profile_id=uuid.uuid4(),
-        category=_CATEGORY,
-        trait_key=_TRAIT_KEY,
-        title="Curious",
-        description="Old description",
-        score=0.5,
-        confidence=ConfidenceLabel.STILL_FORMING,
+        card_key=_CARD_KEY,
+        reading="Old reading.",
+        confidence_score=0.5,
     )
     fake_profile = MagicMock()
-    fake_profile.id = existing_trait.profile_id
+    fake_profile.id = existing_card.profile_id
 
     messages_result = MagicMock()
     messages_result.scalars.return_value.all.return_value = [message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = fake_profile
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = [existing_trait]
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = [existing_card]
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
     mock_db.add = MagicMock()
 
     with patch(
@@ -542,13 +534,12 @@ async def test_extract_and_merge_clamps_score_movement_for_existing_trait():
     ):
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
-    # A3 promotion rule (v2): model proposes 0.9, but a single pass can only move an
-    # existing score by up to 0.3 -> 0.5 + 0.3 = 0.8, not straight to the model's 0.9.
-    assert existing_trait.score == pytest.approx(0.8)
-    assert existing_trait.confidence == ConfidenceLabel.CONFIDENT  # 0.8 crosses the 0.7 threshold
-    assert existing_trait.source_conversation_id == convo.id
+    # A3 promotion rule: model proposes 0.9, but a single pass can only move an
+    # existing confidence by up to 0.3 -> 0.5 + 0.3 = 0.8, not straight to the model's 0.9.
+    assert existing_card.confidence_score == pytest.approx(0.8)
+    assert existing_card.source_conversation_id == convo.id
     mock_db.commit.assert_awaited()
-    assert result == [existing_trait]
+    assert result == [existing_card]
 
 
 @pytest.mark.asyncio
@@ -558,29 +549,26 @@ async def test_extract_and_merge_clamps_downward_movement_too():
         id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
         role=MessageRole.STUDENT, content="Actually I hate figuring things out myself",
     )
-    existing_trait = ProfileTrait(
+    existing_card = ProfileCard(
         id=uuid.uuid4(),
         school_id=convo.school_id,
         profile_id=uuid.uuid4(),
-        category=_CATEGORY,
-        trait_key=_TRAIT_KEY,
-        title="Curious",
-        description="Old description",
-        score=0.9,
-        confidence=ConfidenceLabel.CONFIDENT,
+        card_key=_CARD_KEY,
+        reading="Old reading.",
+        confidence_score=0.9,
     )
     fake_profile = MagicMock()
-    fake_profile.id = existing_trait.profile_id
+    fake_profile.id = existing_card.profile_id
 
     messages_result = MagicMock()
     messages_result.scalars.return_value.all.return_value = [message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = fake_profile
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = [existing_trait]
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = [existing_card]
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
     mock_db.add = MagicMock()
 
     with patch(
@@ -590,8 +578,8 @@ async def test_extract_and_merge_clamps_downward_movement_too():
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
     # Model proposes 0.1, clamp limits the drop to -0.3 -> 0.9 - 0.3 = 0.6, not straight to 0.1.
-    assert existing_trait.score == pytest.approx(0.6)
-    assert result == [existing_trait]
+    assert existing_card.confidence_score == pytest.approx(0.6)
+    assert result == [existing_card]
 
 
 @pytest.mark.asyncio
@@ -635,11 +623,11 @@ async def test_extract_and_merge_returns_none_on_llm_failure():
     messages_result.scalars.return_value.all.return_value = [message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = None
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = []
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = []
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
 
     with patch(
         "app.services.profile_extraction.chat_completion",
@@ -652,53 +640,47 @@ async def test_extract_and_merge_returns_none_on_llm_failure():
 
 
 @pytest.mark.asyncio
-async def test_extract_and_merge_skips_no_op_description():
+async def test_extract_and_merge_skips_no_op_reading():
     """
-    Deterministic backstop: even though the prompt says to leave a trait out
+    Deterministic backstop: even though the prompt says to leave a card out
     entirely when nothing changed, the model has been observed to include it
-    anyway with a description that just narrates "no new signal" — which
-    would otherwise overwrite a real description with junk.
+    anyway with a reading that just narrates "no new signal" — which would
+    otherwise overwrite a real reading with junk.
     """
     convo = _fake_conversation()
     message = ConversationMessage(
         id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
         role=MessageRole.STUDENT, content="something unrelated",
     )
-    existing_trait = ProfileTrait(
+    existing_card = ProfileCard(
         id=uuid.uuid4(),
         school_id=convo.school_id,
         profile_id=uuid.uuid4(),
-        category=_CATEGORY,
-        trait_key=_TRAIT_KEY,
-        title="Curious",
-        description="Asks a lot of follow-up questions.",
-        score=0.8,
-        confidence=ConfidenceLabel.CONFIDENT,
+        card_key=_CARD_KEY,
+        reading="You learn best by trying things yourself first.",
+        confidence_score=0.8,
     )
     fake_profile = MagicMock()
-    fake_profile.id = existing_trait.profile_id
+    fake_profile.id = existing_card.profile_id
 
     messages_result = MagicMock()
     messages_result.scalars.return_value.all.return_value = [message]
     profile_result = MagicMock()
     profile_result.scalar_one_or_none.return_value = fake_profile
-    traits_result = MagicMock()
-    traits_result.scalars.return_value.all.return_value = [existing_trait]
+    cards_result = MagicMock()
+    cards_result.scalars.return_value.all.return_value = [existing_card]
 
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.execute.side_effect = [messages_result, profile_result, cards_result]
     mock_db.add = MagicMock()
 
     no_op_response = json.dumps(
         {
             "observations": [
                 {
-                    "trait_key": _TRAIT_KEY,
-                    "category": _CATEGORY,
-                    "observed_score": 0.8,
-                    "title": "Curious",
-                    "description": "No new signal in this conversation; remains unchanged.",
-                    "teaching_tip": None,
+                    "card_key": _CARD_KEY,
+                    "reading": "No new signal in this conversation; remains unchanged.",
+                    "confidence": 0.8,
                 }
             ]
         }
@@ -710,11 +692,14 @@ async def test_extract_and_merge_skips_no_op_description():
     ):
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
-    # The original description survives untouched, and nothing is reported as updated
-    assert existing_trait.description == "Asks a lot of follow-up questions."
+    # The original reading survives untouched, and nothing is reported as updated
+    assert existing_card.reading == "You learn best by trying things yourself first."
     assert result == []
 
 
-def test_confidence_threshold_unchanged():
-    """Guards against silently changing the shared A1 threshold from this ticket."""
-    assert CONFIDENCE_THRESHOLD == 0.7
+def test_card_guide_examples_cover_every_card():
+    """The few-shot examples embedded in the extraction prompt must exist for
+    every one of the 7 fixed cards, or the prompt build itself would KeyError."""
+    for key in CardKey:
+        assert key in profile_extraction._EXAMPLE_READINGS
+        assert profile_extraction._EXAMPLE_READINGS[key]

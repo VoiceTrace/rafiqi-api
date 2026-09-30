@@ -9,7 +9,8 @@ from app.core.config import settings
 from app.core.errors import ErrorCode
 from app.models.conversation import Conversation
 from app.models.message import ConversationMessage, MessageRole
-from app.models.profile import ProfileTrait, StudentProfile
+from app.models.profile import ProfileCard, StudentProfile
+from app.schemas.profile import CARD_DEFINITIONS, CardKey
 from app.models.user import User
 from app.services import profile_extraction
 from app.services.llm import LLMError, chat_completion
@@ -68,26 +69,28 @@ def _gateway_unavailable() -> HTTPException:
     )
 
 
-def _persona_prompt(student_name: str, traits: list[ProfileTrait]) -> str:
-    if not traits:
+def _persona_prompt(student_name: str, cards: list[ProfileCard]) -> str:
+    if not cards:
         profile_context = "You don't know this student yet — this is their first visit to the Cave."
     else:
-        lines = "\n".join(f"- {t.title}: {t.description}" for t in traits)
+        lines = "\n".join(
+            f"- {CARD_DEFINITIONS[CardKey(c.card_key)].title}: {c.reading}" for c in cards
+        )
         profile_context = f"What you already know about this student so far:\n{lines}"
     return _PERSONA_SYSTEM_PROMPT.format(student_name=student_name, profile_context=profile_context)
 
 
-async def _existing_traits(student_id: uuid.UUID, db: AsyncSession) -> list[ProfileTrait]:
+async def _existing_cards(student_id: uuid.UUID, db: AsyncSession) -> list[ProfileCard]:
     profile_result = await db.execute(
         select(StudentProfile).where(StudentProfile.student_id == student_id)
     )
     profile = profile_result.scalar_one_or_none()
     if profile is None:
         return []
-    traits_result = await db.execute(
-        select(ProfileTrait).where(ProfileTrait.profile_id == profile.id)
+    cards_result = await db.execute(
+        select(ProfileCard).where(ProfileCard.profile_id == profile.id)
     )
-    return list(traits_result.scalars().all())
+    return list(cards_result.scalars().all())
 
 
 async def _recent_messages(
@@ -148,7 +151,7 @@ async def _most_recently_active(
 
 async def _maybe_extract(
     conversation: Conversation, db: AsyncSession, *, force: bool = False
-) -> list[ProfileTrait] | None:
+) -> list[ProfileCard] | None:
     """
     Runs A3 over whatever's accumulated since this conversation's last
     extraction checkpoint, if there's enough of it (or `force`, used when a
@@ -262,11 +265,11 @@ async def get_active_conversation(
     db.add(conversation)
     await db.flush()
 
-    traits = await _existing_traits(student_id, db)
+    cards = await _existing_cards(student_id, db)
     try:
         opening_text = await chat_completion(
             messages=[
-                {"role": "system", "content": _persona_prompt(student_name, traits)},
+                {"role": "system", "content": _persona_prompt(student_name, cards)},
                 {
                     "role": "user",
                     "content": "(The student just opened the Cave. Greet them warmly and ask "
@@ -294,7 +297,7 @@ async def get_active_conversation(
 
 async def post_message(
     conversation: Conversation, student_name: str, content: str, db: AsyncSession
-) -> tuple[ConversationMessage, list[ProfileTrait] | None]:
+) -> tuple[ConversationMessage, list[ProfileCard] | None]:
     """
     Sends a student message and returns Rafiqi's reply, plus whatever A3
     extraction produced *if* it happened to run on this turn (see
@@ -326,8 +329,8 @@ async def post_message(
         db.add(reply)
         await db.commit()
         await db.refresh(reply)
-        updated_traits = await _maybe_extract(conversation, db)
-        return reply, updated_traits
+        updated_cards = await _maybe_extract(conversation, db)
+        return reply, updated_cards
 
     db.add(
         ConversationMessage(
@@ -340,9 +343,9 @@ async def post_message(
     )
     await db.flush()
 
-    traits = await _existing_traits(conversation.student_id, db)
+    cards = await _existing_cards(conversation.student_id, db)
     history = await _recent_messages(conversation.id, db)
-    llm_messages = [{"role": "system", "content": _persona_prompt(student_name, traits)}]
+    llm_messages = [{"role": "system", "content": _persona_prompt(student_name, cards)}]
     llm_messages += [
         {"role": "assistant" if msg.role == MessageRole.RAFIQI else "user", "content": msg.content}
         for msg in history
@@ -364,8 +367,8 @@ async def post_message(
     await db.commit()
     await db.refresh(reply)
 
-    updated_traits = await _maybe_extract(conversation, db)
-    return reply, updated_traits
+    updated_cards = await _maybe_extract(conversation, db)
+    return reply, updated_cards
 
 
 async def list_flags(school_id: uuid.UUID, db: AsyncSession) -> list[tuple[ConversationMessage, str]]:

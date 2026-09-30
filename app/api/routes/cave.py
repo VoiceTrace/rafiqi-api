@@ -14,8 +14,8 @@ from app.schemas.cave import (
     FlaggedMessageOut,
     SendMessageOut,
 )
-from app.schemas.profile import StudentTraitCardOut
 from app.services import cave as cave_svc
+from app.services import profile as profile_svc
 from app.services import user as user_svc
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -146,7 +146,7 @@ async def post_message(
     turn.
 
     Profile extraction (A3) runs automatically roughly every 20 messages in
-    a conversation — `updated_traits` is populated only on the turn that
+    a conversation — `updated_cards` is populated only on the turn that
     happens to trigger it, null otherwise.
 
     Student access only, own conversation only.
@@ -155,13 +155,11 @@ async def post_message(
     conversation = await cave_svc.get_owned_conversation(
         conversation_id, current_user.id, current_user.school_id, db
     )
-    reply, updated_traits = await cave_svc.post_message(conversation, student.full_name, body.content, db)
+    reply, updated_cards = await cave_svc.post_message(conversation, student.full_name, body.content, db)
     return SendMessageOut(
         message=CaveMessageOut.model_validate(reply),
-        updated_traits=(
-            [StudentTraitCardOut.model_validate(t) for t in updated_traits]
-            if updated_traits is not None
-            else None
+        updated_cards=(
+            [profile_svc.card_to_out(c) for c in updated_cards] if updated_cards is not None else None
         ),
     )
 

@@ -83,9 +83,10 @@ tags_metadata = [
     },
     {
         "name": "profiles",
-        "description": "Student profile — traits, confidence scores, teaching tips. "
-                       "Built automatically from Cave chat (A2/A3). "
-                       "Teachers read; students see their own.",
+        "description": "Student learner profile — exactly 7 fixed cards (how you learn, "
+                       "where you are, what drives you, how you feel, study habits, "
+                       "language & company, your world), each a narrative reading. Built "
+                       "automatically from Cave chat (A2/A3). Students see their own.",
     },
     {
         "name": "conversations",

@@ -8,54 +8,89 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.conversation import Conversation
 from app.models.message import ConversationMessage
-from app.models.profile import ConfidenceLabel, ProfileTrait, StudentProfile
-from app.schemas.profile import CONFIDENCE_THRESHOLD, TraitCategory, TraitKey
+from app.models.profile import ProfileCard, StudentProfile
+from app.schemas.profile import CARD_DEFINITIONS, CardKey
 from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
 
-# A3 promotion rule (v2): the model sees the *current* profile and proposes a
-# target score for each trait it chooses to touch; code only clamps how far a
-# single session can move an existing trait, so one noisy conversation can't
-# flip it, but real signal still moves it — without the model flying blind
-# against a fixed formula it can't see. A brand-new trait has no prior value
-# to clamp against, so it's created at whatever the model proposes.
-_MAX_SCORE_DELTA_PER_SESSION = 0.3
+# A3 promotion rule: the model sees the *current* reading (if any) for each
+# card and proposes a fresh one plus a confidence estimate; code only clamps
+# how far a single pass can move an established card's internal confidence
+# (never shown to the student — used purely as a stability guard so one
+# noisy pass can't flip an established reading). A brand-new card has no
+# prior value to clamp against, so it's created at whatever the model proposes.
+_MAX_CONFIDENCE_DELTA_PER_PASS = 0.3
 
-_ALLOWED_TRAIT_KEYS = {key.value for key in TraitKey}
-_ALLOWED_CATEGORIES = {cat.value for cat in TraitCategory}
+_ALLOWED_CARD_KEYS = {key.value for key in CardKey}
+
+# The exact mock_reading examples from the product spec, reused here as
+# few-shot grounding for tone/length/format — not content to copy verbatim
+# for any real student.
+_EXAMPLE_READINGS: dict[CardKey, str] = {
+    CardKey.HOW_YOU_LEARN: (
+        "You learn best by trying first, then seeing the explanation. "
+        "Diagrams click faster than long text."
+    ),
+    CardKey.WHERE_YOU_ARE: (
+        "Strong on forces; still linking force to acceleration. "
+        "A small gap on vectors carried over from last year."
+    ),
+    CardKey.WHAT_DRIVES_YOU: (
+        "You aim for engineering. You push harder when a topic connects to real machines and cars."
+    ),
+    CardKey.HOW_YOU_FEEL: (
+        "You get a bit anxious before tests. You respond better to encouragement than to pressure."
+    ),
+    CardKey.STUDY_HABITS: (
+        "You focus best in short evening sessions — and you tend to stay quiet "
+        "when stuck instead of asking."
+    ),
+    CardKey.LANGUAGE_AND_COMPANY: (
+        "English is your second language, so you prefer clear, simple wording — "
+        "and you learn well in a small group."
+    ),
+    CardKey.YOUR_WORLD: (
+        "Into football and gaming. You like a friendly, direct tone and answers that get to the point."
+    ),
+}
+
+_CARD_GUIDE = "\n".join(
+    f'- {key.value}: {CARD_DEFINITIONS[key].captures}\n'
+    f'  Tone/length example (not this student\'s real content): "{_EXAMPLE_READINGS[key]}"'
+    for key in CardKey
+)
 
 _EXTRACTION_SYSTEM_PROMPT = f"""You are reading a transcript of a conversation between a \
 student and an AI tutor called Rafiqi, held to get to know how the student learns \
-("Rafiqi's Cave"). You will be told what is already believed about this student (if \
-anything), then given the new transcript. Decide what, if anything, to add or change.
+("Rafiqi's Cave"). The student's learner profile has exactly these 7 fixed cards — you can \
+only ever write to these, never invent a new one:
+
+{_CARD_GUIDE}
+
+You will be told the current reading for each card (if any), then given the new transcript. \
+For each card the transcript gives real, specific signal about, write a fresh, complete \
+reading — second person ("you..."), 1-3 plain sentences, matching the tone and length of the \
+examples above. A reading is a full current synthesis, not a diff or an appended note: fold in \
+whatever from the old reading is still true alongside anything new.
 
 Rules:
-- For a trait_key with no existing entry: propose one only if the transcript gives real, \
-specific signal for it. Don't guess to fill gaps.
-- For a trait_key that already has an entry: only include it if this new conversation adds \
-real signal — either reinforcing it (propose a score at or slightly above the current one) or \
-contradicting/complicating it (propose a lower score and an updated description).
-- If nothing in this conversation bears on an existing trait, leave it out of the JSON array \
-entirely. Do NOT include it just to say nothing changed — there is no field for "no update" \
-and no reason to mention a trait you're not updating. A description like "no new signal" or \
-"remains unchanged" must never appear in your output; if you find yourself writing something \
-like that, delete that observation from the array instead.
-- `description` is a narrative read of the *student*, written fresh each time — never a note \
-about your own extraction process or what did/didn't change this session.
-- Never invent an observation the transcript doesn't support.
+- Only include a card if the transcript gives real, specific signal for it — most \
+conversations won't touch most cards. Don't guess to fill gaps.
+- If nothing in this conversation bears on a card that already has a reading, leave it out of \
+the JSON array entirely. Do NOT include it just to say nothing changed — a reading like "no \
+new signal" or "remains unchanged" must never appear in your output.
+- where_you_are is about academic strengths/gaps specifically — only write to it if the \
+conversation actually touched on schoolwork; most casual chats won't, and that's fine, leave \
+it out rather than guess.
+- Never invent anything the transcript doesn't support, and never quote the student verbatim \
+or restate anything alarming or identifying — paraphrase.
 
 Respond as a JSON object: {{"observations": [...]}}. Each observation has exactly these fields:
-- trait_key: one of {sorted(_ALLOWED_TRAIT_KEYS)}
-- category: one of {sorted(_ALLOWED_CATEGORIES)}
-- observed_score: a float from 0.0 to 1.0 — your target confidence for this trait after this \
-conversation (for an existing trait, this is what you think the *new* value should move \
-toward, not a delta)
-- title: a short (3-6 word) display title
-- description: one or two sentences, written as a narrative read for a teacher — paraphrase \
-the student's own words, never quote them verbatim, and never restate anything alarming or \
-identifying
-- teaching_tip: one short, actionable sentence for a teacher, or null
+- card_key: one of {sorted(_ALLOWED_CARD_KEYS)}
+- reading: the fresh narrative, as described above
+- confidence: a float from 0.0 to 1.0 — how strongly the transcript (plus any prior signal) \
+supports this reading
 
 Return {{"observations": []}} if nothing clear emerged. Respond with strict JSON only."""
 
@@ -69,35 +104,33 @@ _NO_OP_PHRASES = (
 )
 
 
-def _is_no_op_description(description: str) -> bool:
-    lowered = description.lower()
+def _is_no_op_reading(reading: str) -> bool:
+    lowered = reading.lower()
     return any(phrase in lowered for phrase in _NO_OP_PHRASES)
 
 
-def _profile_context(existing_by_key: dict[str, ProfileTrait]) -> str:
+def _profile_context(existing_by_key: dict[str, ProfileCard]) -> str:
     if not existing_by_key:
-        return "You don't know this student yet — no traits recorded so far."
-    lines = "\n".join(
-        f"- {key} ({trait.confidence}, current score {trait.score:.2f}): {trait.description}"
-        for key, trait in sorted(existing_by_key.items())
-    )
-    return f"What you currently believe about this student:\n{lines}"
+        return "You don't know this student yet — no cards have a reading so far."
+    lines = "\n".join(f"- {key}: {card.reading}" for key, card in sorted(existing_by_key.items()))
+    return f"Current readings for this student:\n{lines}"
 
 
 async def extract_and_merge(
     conversation: Conversation, db: AsyncSession, message_offset: int = 0
-) -> list[ProfileTrait] | None:
+) -> list[ProfileCard] | None:
     """
-    A3: reads conversation messages after `message_offset` and merges
-    observations into the student's ProfileTrait rows. The model is shown
-    the *current* profile state and asked to propose fills (for gaps) or
-    changes (for existing traits the conversation actually bears on) —
-    diff-based by construction, since the model is told to omit anything it
-    has no reason to touch. Code only clamps how far a single pass can move
-    an existing score (see `_MAX_SCORE_DELTA_PER_SESSION`), as a stability
-    guard the model itself doesn't need to reason about. Flagged (safety)
-    turns are excluded from the transcript — a crisis/cheating moment isn't
-    a learning-style signal.
+    A3: reads conversation messages after `message_offset` and writes fresh
+    readings into the student's ProfileCard rows — one of exactly 7 fixed
+    cards (see CardKey), never an open vocabulary. The model is shown each
+    card's *current* reading (if any) and asked to propose a fresh
+    synthesis only for cards the transcript actually bears on — diff-based
+    by construction, since the model is told to omit anything it has no
+    reason to touch. Code only clamps how far a single pass can move an
+    existing card's internal confidence (see `_MAX_CONFIDENCE_DELTA_PER_PASS`),
+    as a stability guard the model itself doesn't need to reason about.
+    Flagged (safety) turns are excluded from the transcript — a
+    crisis/cheating moment isn't a learning-style signal.
 
     `message_offset` skips messages already folded into a previous pass —
     this runs periodically over a conversation's life (see cave.py's
@@ -136,10 +169,8 @@ async def extract_and_merge(
         db.add(profile)
         await db.flush()
 
-    existing_result = await db.execute(
-        select(ProfileTrait).where(ProfileTrait.profile_id == profile.id)
-    )
-    existing_by_key = {trait.trait_key: trait for trait in existing_result.scalars().all()}
+    existing_result = await db.execute(select(ProfileCard).where(ProfileCard.profile_id == profile.id))
+    existing_by_key = {card.card_key: card for card in existing_result.scalars().all()}
 
     try:
         raw = await chat_completion(
@@ -153,76 +184,59 @@ async def extract_and_merge(
             model=settings.PROFILE_EXTRACTION_MODEL,
             temperature=0.0,
             json_mode=True,
-            max_tokens=1000,
+            max_tokens=1200,
         )
         observations = parse_json_object(raw).get("observations", [])
     except (LLMError, json.JSONDecodeError, AttributeError) as exc:
         logger.warning("Profile extraction failed for conversation %s: %s", conversation.id, exc)
         return None
 
-    touched: list[ProfileTrait] = []
+    touched: list[ProfileCard] = []
 
     for obs in observations:
-        trait_key = obs.get("trait_key")
-        category = obs.get("category")
-        if trait_key not in _ALLOWED_TRAIT_KEYS or category not in _ALLOWED_CATEGORIES:
-            logger.warning("Skipping extraction observation with unknown key/category: %r", obs)
+        card_key = obs.get("card_key")
+        if card_key not in _ALLOWED_CARD_KEYS:
+            logger.warning("Skipping extraction observation with unknown card_key: %r", obs)
             continue
 
-        observed_score = max(0.0, min(1.0, float(obs.get("observed_score", 0.0))))
-        title = obs.get("title") or trait_key.replace("_", " ").title()
-        description = obs.get("description") or ""
-        teaching_tip = obs.get("teaching_tip")
-
-        if _is_no_op_description(description):
+        reading = (obs.get("reading") or "").strip()
+        if not reading:
+            continue
+        if _is_no_op_reading(reading):
             # Prompt-only "leave it out if nothing changed" isn't 100% reliable —
-            # observed the model include a trait anyway with a description that's
-            # just commentary on its own extraction process (e.g. "no new signal,
+            # observed the model include a card anyway with a reading that's just
+            # commentary on its own extraction process (e.g. "no new signal,
             # remains unchanged"). That text would otherwise overwrite a real
-            # description, so skip applying this observation rather than trust it.
+            # reading, so skip applying this observation rather than trust it.
             logger.warning(
-                "Skipping no-op-looking extraction observation for trait_key=%s: %r",
-                trait_key, description,
+                "Skipping no-op-looking extraction observation for card_key=%s: %r",
+                card_key, reading,
             )
             continue
 
-        existing = existing_by_key.get(trait_key)
+        observed_confidence = max(0.0, min(1.0, float(obs.get("confidence", 0.5))))
+
+        existing = existing_by_key.get(card_key)
         if existing is None:
-            score = observed_score
-            trait = ProfileTrait(
+            card = ProfileCard(
                 id=uuid.uuid4(),
                 school_id=conversation.school_id,
                 profile_id=profile.id,
                 source_conversation_id=conversation.id,
-                category=category,
-                trait_key=trait_key,
-                title=title,
-                description=description,
-                teaching_tip=teaching_tip,
-                score=score,
-                confidence=(
-                    ConfidenceLabel.CONFIDENT
-                    if score >= CONFIDENCE_THRESHOLD
-                    else ConfidenceLabel.STILL_FORMING
-                ),
+                card_key=card_key,
+                reading=reading,
+                confidence_score=observed_confidence,
             )
-            db.add(trait)
-            existing_by_key[trait_key] = trait
-            touched.append(trait)
+            db.add(card)
+            existing_by_key[card_key] = card
+            touched.append(card)
         else:
             delta = max(
-                -_MAX_SCORE_DELTA_PER_SESSION,
-                min(_MAX_SCORE_DELTA_PER_SESSION, observed_score - existing.score),
+                -_MAX_CONFIDENCE_DELTA_PER_PASS,
+                min(_MAX_CONFIDENCE_DELTA_PER_PASS, observed_confidence - existing.confidence_score),
             )
-            existing.score = max(0.0, min(1.0, existing.score + delta))
-            existing.confidence = (
-                ConfidenceLabel.CONFIDENT
-                if existing.score >= CONFIDENCE_THRESHOLD
-                else ConfidenceLabel.STILL_FORMING
-            )
-            existing.title = title
-            existing.description = description
-            existing.teaching_tip = teaching_tip
+            existing.confidence_score = max(0.0, min(1.0, existing.confidence_score + delta))
+            existing.reading = reading
             existing.source_conversation_id = conversation.id
             touched.append(existing)
 
@@ -230,7 +244,7 @@ async def extract_and_merge(
     # updated_at is server-generated (server_default/onupdate) — refresh so the
     # returned objects carry the real value rather than whatever was loaded
     # before this call (or nothing at all, for a newly-created row).
-    for trait in touched:
-        await db.refresh(trait)
+    for card in touched:
+        await db.refresh(card)
 
     return touched

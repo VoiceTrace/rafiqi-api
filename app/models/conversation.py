@@ -15,7 +15,7 @@ class Conversation(Base):
     `_ACTIVE_WINDOW`), based purely on how recently it was last touched, not
     on any stored state here.
 
-    Exists here so ProfileTrait.source_conversation_id (A4) has something to
+    Exists here so ProfileCard.source_conversation_id (A4) has something to
     FK against.
     """
 
@@ -41,7 +41,7 @@ class Conversation(Base):
     )
 
     student: Mapped["User"] = relationship(back_populates="conversations")
-    traits: Mapped[list["ProfileTrait"]] = relationship(back_populates="source_conversation")
+    cards: Mapped[list["ProfileCard"]] = relationship(back_populates="source_conversation")
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",

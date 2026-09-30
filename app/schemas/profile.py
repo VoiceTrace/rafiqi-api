@@ -1,127 +1,107 @@
-import uuid
-from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class TraitCategory(StrEnum):
-    PREFERENCES = "preferences"
-    GOALS = "goals"
-    WELLBEING = "wellbeing"
+class CardKey(StrEnum):
+    """
+    The learner profile is exactly these 7 fixed cards — not an open
+    vocabulary. See CARD_DEFINITIONS below for the static per-card metadata
+    (id, icon, title, captures) the frontend renders alongside each reading.
+    """
+
+    HOW_YOU_LEARN = "how_you_learn"
+    WHERE_YOU_ARE = "where_you_are"
+    WHAT_DRIVES_YOU = "what_drives_you"
+    HOW_YOU_FEEL = "how_you_feel"
     STUDY_HABITS = "study_habits"
-    SOCIAL = "social"
-    CONTEXT = "context"
+    LANGUAGE_AND_COMPANY = "language_and_company"
+    YOUR_WORLD = "your_world"
 
 
-class ConfidenceLabel(StrEnum):
-    CONFIDENT = "confident"
-    STILL_FORMING = "still_forming"
-
-
-# Controlled vocabulary for trait_key — enforced here at the app layer,
-# stored as plain string in DB so new keys don't require a migration.
-# A starting MVP set per category, not exhaustive — expand freely, no migration needed.
-class TraitKey(StrEnum):
-    # Preferences — "how you learn"
-    VISUAL_LEARNER = "visual_learner"
-    AUDITORY_LEARNER = "auditory_learner"
-    CURIOUS = "curious"
-    FOCUSED = "focused"
-    COLLABORATIVE = "collaborative"
-    INDEPENDENT = "independent"
-    # Goals — "what drives you"
-    GOAL_UNDERSTAND_DEEPLY = "goal_understand_deeply"
-    GOAL_BUILD_CONFIDENCE = "goal_build_confidence"
-    GOAL_IMPROVE_GRADES = "goal_improve_grades"
-    GOAL_ENJOY_LEARNING = "goal_enjoy_learning"
-    # Wellbeing — "how you feel"
-    CONFIDENT_UNDER_PRESSURE = "confident_under_pressure"
-    GETS_ANXIOUS_EASILY = "gets_anxious_easily"
-    RESILIENT_AFTER_SETBACKS = "resilient_after_setbacks"
-    POSITIVE_ABOUT_SCHOOL = "positive_about_school"
-    # Study habits
-    PREFERS_SHORT_SESSIONS = "prefers_short_sessions"
-    STUDIES_LAST_MINUTE = "studies_last_minute"
-    STUDIES_WITH_ROUTINE = "studies_with_routine"
-    EASILY_DISTRACTED = "easily_distracted"
-    # Social — "language & company"
-    PREFERS_ARABIC = "prefers_arabic"
-    PREFERS_ENGLISH = "prefers_english"
-    PREFERS_STUDYING_WITH_FRIENDS = "prefers_studying_with_friends"
-    CODE_SWITCHES_ARABIC_ENGLISH = "code_switches_arabic_english"
-    # Context — "your world"
-    SUPPORTIVE_HOME_ENVIRONMENT = "supportive_home_environment"
-    LIMITED_STUDY_TIME_AT_HOME = "limited_study_time_at_home"
-    HAS_SIBLINGS_STUDY_SUPPORT = "has_siblings_study_support"
-    PREFERS_QUIET_STUDY_SPACE = "prefers_quiet_study_space"
-
-
-CONFIDENCE_THRESHOLD = 0.7  # score >= this → "confident"
-
-
-class ProfileTraitOut(BaseModel):
-    id: uuid.UUID
-    profile_id: uuid.UUID
-    source_conversation_id: uuid.UUID | None
-    category: TraitCategory
-    trait_key: str
+class CardDefinition(BaseModel):
+    id: int
+    icon: str
     title: str
-    description: str
-    teaching_tip: str | None
-    score: float = Field(ge=0.0, le=1.0)
-    confidence: ConfidenceLabel
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+    captures: str
 
 
-class StudentProfileOut(BaseModel):
-    id: uuid.UUID
-    student_id: uuid.UUID
-    school_id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-    traits: list[ProfileTraitOut]
+# Static per-card metadata — identical for every student, never AI-generated.
+# Iteration order here is the fixed display order (id 1-7).
+CARD_DEFINITIONS: dict[CardKey, CardDefinition] = {
+    CardKey.HOW_YOU_LEARN: CardDefinition(
+        id=1, icon="🧭", title="How you learn",
+        captures="Learning style: trying first vs. seeing the explanation first, diagrams vs. long text",
+    ),
+    CardKey.WHERE_YOU_ARE: CardDefinition(
+        id=2, icon="📈", title="Where you are",
+        captures="Academic level: strengths, current sticking points, and gaps carried over from earlier years",
+    ),
+    CardKey.WHAT_DRIVES_YOU: CardDefinition(
+        id=3, icon="🎯", title="What drives you",
+        captures="Goals and motivation, e.g. career aim and what topics make the student push harder",
+    ),
+    CardKey.HOW_YOU_FEEL: CardDefinition(
+        id=4, icon="💙", title="How you feel",
+        captures="Emotional side: test anxiety, and whether encouragement or pressure works better",
+    ),
+    CardKey.STUDY_HABITS: CardDefinition(
+        id=5, icon="⏰", title="Your study habits",
+        captures="Best time of day, session length, and behaviour when stuck (e.g. stays quiet instead of asking)",
+    ),
+    CardKey.LANGUAGE_AND_COMPANY: CardDefinition(
+        id=6, icon="🌍", title="Language & company",
+        captures="Language background, preference for simple wording, and whether they learn better "
+        "alone or in a small group",
+    ),
+    CardKey.YOUR_WORLD: CardDefinition(
+        id=7, icon="⚽", title="Your world",
+        captures="Interests (football, gaming) and preferred tone: friendly, direct, to the point",
+    ),
+}
 
-    model_config = {"from_attributes": True}
+CARD_KEY_BY_ID: dict[int, CardKey] = {
+    definition.id: key for key, definition in CARD_DEFINITIONS.items()
+}
 
 
 # ---------------------------------------------------------------------------
 # A6 — student-facing view.
 #
-# Disclosure rule (docs/artifact.md §1, A6, Blocker): narrative reads and
-# teaching-relevant statements only — no numeric trait scores, no comparative
-# framing. This schema deliberately has no `score` field; only the derived
-# label. Never widen this to include `score` without a new disclosure
-# decision.
+# Exactly the frontend contract, nothing else: id, icon, title, captures,
+# reading. No numeric score, no confidence label — per the explicit
+# "extract this and only this" spec. Never widen this without a new,
+# explicit decision to do so.
 # ---------------------------------------------------------------------------
 
-class StudentTraitCardOut(BaseModel):
-    id: uuid.UUID
-    category: TraitCategory
-    trait_key: str
+class LearnerCardOut(BaseModel):
+    id: int
+    icon: str
     title: str
-    description: str
-    teaching_tip: str | None
-    confidence: ConfidenceLabel
-    updated_at: datetime
+    captures: str
+    reading: str | None = Field(
+        default=None,
+        description="Null until the first extraction pass produces real signal for this "
+        "card — the normal 'still getting to know you' state, not an error.",
+    )
 
-    model_config = {"from_attributes": True}
+
+class LearnerModelOut(BaseModel):
+    cards: list[LearnerCardOut]
 
 
-class StudentProfileViewOut(BaseModel):
-    cards: list[StudentTraitCardOut]
+class ProfileViewOut(BaseModel):
+    learner_model: LearnerModelOut
 
 
 # ---------------------------------------------------------------------------
 # A5 — "not quite me?" correction
 # ---------------------------------------------------------------------------
 
-class TraitFlagIn(BaseModel):
+class CardFlagIn(BaseModel):
     reason: str = Field(..., min_length=1, max_length=2000)
 
 
-class TraitFlagOut(BaseModel):
-    trait: StudentTraitCardOut
+class CardFlagOut(BaseModel):
+    card: LearnerCardOut
     acknowledgement: str

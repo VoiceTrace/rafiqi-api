@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ErrorCode
-from app.models.profile import ConfidenceLabel, ProfileTrait, ProfileTraitCorrection, StudentProfile
-from app.schemas.profile import CONFIDENCE_THRESHOLD
+from app.models.profile import ProfileCard, ProfileCardCorrection, StudentProfile
+from app.schemas.profile import CARD_DEFINITIONS, CARD_KEY_BY_ID, CardKey, LearnerCardOut, LearnerModelOut
 from app.services.llm import LLMError, chat_completion, parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -19,30 +19,43 @@ _FALLBACK_ACKNOWLEDGEMENT = (
 )
 
 _CORRECTION_SYSTEM_PROMPT = """A student has flagged one of Rafiqi's reads of them as wrong, \
-with their own explanation of why. Given the current trait card and their explanation, decide \
-how to revise it. Respond with strict JSON only:
+with their own explanation of why. Given the current card reading and their explanation, write \
+a revised reading. Respond with strict JSON only:
 
-{"description": "<revised 1-2 sentence narrative, paraphrased, never quoting the student \
-verbatim>", "teaching_tip": "<revised short tip for a teacher, or null>", "score": <float \
-0.0-1.0, the corrected confidence — usually lower than before since the student says the read \
-is wrong, unless their explanation actually confirms the read and just adds nuance>, \
-"acknowledgement": "<one warm, non-clinical sentence to say back to the student>"}"""
+{"reading": "<revised narrative, second person ('you...'), 1-3 plain sentences, paraphrased, \
+never quoting the student verbatim>", "confidence": <float 0.0-1.0 — usually lower than before \
+since the student says the read is wrong, unless their explanation actually confirms it and \
+just adds nuance>, "acknowledgement": "<one warm, non-clinical sentence to say back to the \
+student>"}"""
 
 
 def _not_found() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Trait not found"}},
+        detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Card not found"}},
     )
 
 
-async def get_own_profile_cards(
+def card_to_out(card: ProfileCard) -> LearnerCardOut:
+    definition = CARD_DEFINITIONS[CardKey(card.card_key)]
+    return LearnerCardOut(
+        id=definition.id,
+        icon=definition.icon,
+        title=definition.title,
+        captures=definition.captures,
+        reading=card.reading,
+    )
+
+
+async def get_own_profile_view(
     student_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
-) -> list[ProfileTrait]:
+) -> LearnerModelOut:
     """
-    A6: the student's own profile, narrative view. Returns an empty list for a
-    student who hasn't chatted yet — the "new, not broken" empty state is a
-    frontend concern, not a backend error.
+    A6: the student's own learner profile — always exactly the 7 fixed
+    cards, in fixed order. `reading` is null for any card nothing has been
+    extracted for yet (including every card, for a student who hasn't
+    chatted at all) — the normal "still getting to know you" state, not an
+    error or a broken response.
     """
     profile_result = await db.execute(
         select(StudentProfile).where(
@@ -50,40 +63,57 @@ async def get_own_profile_cards(
         )
     )
     profile = profile_result.scalar_one_or_none()
-    if profile is None:
-        return []
 
-    traits_result = await db.execute(
-        select(ProfileTrait)
-        .where(ProfileTrait.profile_id == profile.id)
-        .order_by(ProfileTrait.category, ProfileTrait.trait_key)
-    )
-    return list(traits_result.scalars().all())
+    existing_by_key: dict[str, ProfileCard] = {}
+    if profile is not None:
+        cards_result = await db.execute(select(ProfileCard).where(ProfileCard.profile_id == profile.id))
+        existing_by_key = {card.card_key: card for card in cards_result.scalars().all()}
+
+    cards = []
+    for card_key in CardKey:  # fixed display order, ids 1-7
+        definition = CARD_DEFINITIONS[card_key]
+        existing = existing_by_key.get(card_key.value)
+        cards.append(
+            LearnerCardOut(
+                id=definition.id,
+                icon=definition.icon,
+                title=definition.title,
+                captures=definition.captures,
+                reading=existing.reading if existing else None,
+            )
+        )
+    return LearnerModelOut(cards=cards)
 
 
-async def flag_trait(
-    trait_id: uuid.UUID, student_id: uuid.UUID, school_id: uuid.UUID, reason: str, db: AsyncSession
-) -> tuple[ProfileTrait, str]:
+async def flag_card(
+    card_id: int, student_id: uuid.UUID, school_id: uuid.UUID, reason: str, db: AsyncSession
+) -> tuple[LearnerCardOut, str]:
     """
-    A5: student flags a trait card as wrong and explains why. Resolved
-    synchronously (no job queue in this stack) — one LLM call decides whether
-    to revise the description/tip/score, and the correction is recorded
-    either way as an audit trail (A4-style trust/debuggability).
+    A5: student flags a card's reading as wrong and explains why. Resolved
+    synchronously (no job queue in this stack) — one LLM call decides the
+    revised reading, and the correction is recorded either way as an audit
+    trail (A4-style trust/debuggability).
 
-    Fails safe on an LLM error: rather than leaving a disputed trait looking
-    untouched, it's conservatively knocked back to "still_forming".
+    Fails safe on an LLM error: rather than leaving a disputed reading
+    looking untouched, its internal confidence is conservatively knocked down.
     """
+    card_key = CARD_KEY_BY_ID.get(card_id)
+    if card_key is None:
+        raise _not_found()
+
     result = await db.execute(
-        select(ProfileTrait)
-        .join(StudentProfile, StudentProfile.id == ProfileTrait.profile_id)
+        select(ProfileCard)
+        .join(StudentProfile, StudentProfile.id == ProfileCard.profile_id)
         .where(
-            ProfileTrait.id == trait_id,
-            ProfileTrait.school_id == school_id,
+            ProfileCard.card_key == card_key.value,
+            ProfileCard.school_id == school_id,
             StudentProfile.student_id == student_id,
         )
     )
-    trait = result.scalar_one_or_none()
-    if trait is None:
+    card = result.scalar_one_or_none()
+    if card is None:
+        # Either an invalid id or nothing's been extracted for this card yet —
+        # either way there's no reading to dispute.
         raise _not_found()
 
     verdict = None
@@ -95,10 +125,8 @@ async def flag_trait(
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "trait_key": trait.trait_key,
-                            "current_title": trait.title,
-                            "current_description": trait.description,
-                            "current_score": trait.score,
+                            "card_title": CARD_DEFINITIONS[card_key].title,
+                            "current_reading": card.reading,
                             "student_reason": reason,
                         }
                     ),
@@ -111,32 +139,27 @@ async def flag_trait(
         )
         verdict = parse_json_object(raw)
     except (LLMError, json.JSONDecodeError) as exc:
-        logger.warning("Trait correction resolution failed for trait %s: %s", trait_id, exc)
+        logger.warning("Card correction resolution failed for card %s: %s", card.id, exc)
 
     if verdict:
-        trait.description = verdict.get("description") or trait.description
-        trait.teaching_tip = verdict.get("teaching_tip", trait.teaching_tip)
-        new_score = verdict.get("score")
-        if isinstance(new_score, (int, float)):
-            trait.score = max(0.0, min(1.0, float(new_score)))
+        card.reading = verdict.get("reading") or card.reading
+        new_confidence = verdict.get("confidence")
+        if isinstance(new_confidence, (int, float)):
+            card.confidence_score = max(0.0, min(1.0, float(new_confidence)))
         acknowledgement = verdict.get("acknowledgement") or _FALLBACK_ACKNOWLEDGEMENT
     else:
-        trait.score = min(trait.score, CONFIDENCE_THRESHOLD - 0.05)
+        card.confidence_score = max(0.0, card.confidence_score - 0.3)
         acknowledgement = _FALLBACK_ACKNOWLEDGEMENT
 
-    trait.confidence = (
-        ConfidenceLabel.CONFIDENT if trait.score >= CONFIDENCE_THRESHOLD else ConfidenceLabel.STILL_FORMING
-    )
-
     db.add(
-        ProfileTraitCorrection(
+        ProfileCardCorrection(
             id=uuid.uuid4(),
             school_id=school_id,
-            trait_id=trait.id,
+            card_id=card.id,
             reason=reason,
             resolution_note=acknowledgement,
         )
     )
     await db.commit()
-    await db.refresh(trait)
-    return trait, acknowledgement
+    await db.refresh(card)
+    return card_to_out(card), acknowledgement

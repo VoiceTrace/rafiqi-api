@@ -2,30 +2,32 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
 
-class TraitCategory(StrEnum):
-    PREFERENCES = "preferences"
-    GOALS = "goals"
-    WELLBEING = "wellbeing"
+class CardKey(StrEnum):
+    """
+    The learner profile is exactly these 7 fixed cards — not an open
+    vocabulary. Each student has at most one ProfileCard row per key. See
+    app/schemas/profile.py's CARD_DEFINITIONS for the static per-card
+    metadata (id, icon, title, captures) the frontend renders.
+    """
+
+    HOW_YOU_LEARN = "how_you_learn"
+    WHERE_YOU_ARE = "where_you_are"
+    WHAT_DRIVES_YOU = "what_drives_you"
+    HOW_YOU_FEEL = "how_you_feel"
     STUDY_HABITS = "study_habits"
-    SOCIAL = "social"
-    CONTEXT = "context"
-
-
-class ConfidenceLabel(StrEnum):
-    """Human-readable label shown in the UI."""
-    CONFIDENT = "confident"
-    STILL_FORMING = "still_forming"
+    LANGUAGE_AND_COMPANY = "language_and_company"
+    YOUR_WORLD = "your_world"
 
 
 class StudentProfile(Base):
     """
-    Anchor record — one per student. Thin by design; the richness lives in ProfileTrait rows.
+    Anchor record — one per student. Thin by design; the richness lives in ProfileCard rows.
     """
 
     __tablename__ = "student_profiles"
@@ -48,26 +50,34 @@ class StudentProfile(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="student_profile")
-    traits: Mapped[list["ProfileTrait"]] = relationship(
+    cards: Mapped[list["ProfileCard"]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"
     )
 
 
-class ProfileTrait(Base):
+class ProfileCard(Base):
     """
-    One row per trait per student.
+    One row per (student, card_key) — at most 7 per student, one per fixed
+    life-area card (see CardKey). `reading` is the single narrative Rafiqi
+    currently believes for that card; each extraction pass that touches a
+    card replaces it with a fresh, complete synthesis, not an append. A row
+    only exists once there's real signal for that card — no row yet is the
+    normal "still getting to know you" state, surfaced as `reading: null`
+    by the API layer (see app/services/profile.py), not stored as an empty
+    row here.
 
-    score       — agent-facing float (0.0–1.0): how confident the LLM is
-                  about this trait. Drives the confidence label.
-    confidence  — user-facing label derived from score:
-                  score >= 0.7 → "confident", else "still_forming".
-                  Stored explicitly so it can be queried/displayed without
-                  re-running the threshold logic everywhere.
-    source_conversation_id — which Cave chat produced/last updated this trait
-                  (needed for A4: teacher can see where a trait came from).
+    confidence_score is internal only (0.0-1.0) — used purely to decide how
+    much a single extraction pass is allowed to move an established
+    reading (see app/services/profile_extraction.py). Never exposed via
+    the API: the frontend gets exactly {id, icon, title, captures,
+    reading} per card, no score, no confidence label, per the explicit
+    "extract this and only this" contract.
     """
 
-    __tablename__ = "profile_traits"
+    __tablename__ = "profile_cards"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "card_key", name="uq_profile_cards_profile_id_card_key"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(
@@ -80,23 +90,12 @@ class ProfileTrait(Base):
         ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
     )
 
-    # What kind of trait this is — matches the two UI card sections
-    category: Mapped[str] = mapped_column(String(50), nullable=False)  # TraitCategory
+    # Controlled vocabulary — exactly the 7 CardKey values, plain string in
+    # DB per this project's usual pattern (app-layer StrEnum, no DB constraint).
+    card_key: Mapped[str] = mapped_column(String(50), nullable=False)
 
-    # Controlled vocabulary enforced at the app layer (Python StrEnum in schemas),
-    # stored as a plain string so new trait types don't require a DB migration.
-    trait_key: Mapped[str] = mapped_column(String(100), nullable=False)
-
-    # Display fields — what the UI and teacher see
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    teaching_tip: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Confidence — agent-facing numeric + user-facing label (see docstring above)
-    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    confidence: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=ConfidenceLabel.STILL_FORMING
-    )
+    reading: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -105,32 +104,30 @@ class ProfileTrait(Base):
         nullable=False,
     )
 
-    profile: Mapped["StudentProfile"] = relationship(back_populates="traits")
-    source_conversation: Mapped["Conversation | None"] = relationship(
-        back_populates="traits"
-    )
-    corrections: Mapped[list["ProfileTraitCorrection"]] = relationship(
-        back_populates="trait", cascade="all, delete-orphan"
+    profile: Mapped["StudentProfile"] = relationship(back_populates="cards")
+    source_conversation: Mapped["Conversation | None"] = relationship(back_populates="cards")
+    corrections: Mapped[list["ProfileCardCorrection"]] = relationship(
+        back_populates="card", cascade="all, delete-orphan"
     )
 
 
-class ProfileTraitCorrection(Base):
+class ProfileCardCorrection(Base):
     """
-    A5: a student's "not quite me?" flag on a trait card, with their reason.
-    Immutable audit log — resolved synchronously in the same request (see
-    app/services/profile.py), `resolution_note` records what the AI did about
-    it. Kept even after resolution for A4-style trust/debuggability: a teacher
-    (or the student) can see a trait was disputed and how it was handled.
+    A5: a student's "not quite me?" flag on a card's reading, with their
+    reason. Immutable audit log — resolved synchronously in the same
+    request (see app/services/profile.py), `resolution_note` records what
+    the AI did about it. Kept even after resolution for A4-style
+    trust/debuggability.
     """
 
-    __tablename__ = "profile_trait_corrections"
+    __tablename__ = "profile_card_corrections"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    trait_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("profile_traits.id", ondelete="CASCADE"), nullable=False, index=True
+    card_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("profile_cards.id", ondelete="CASCADE"), nullable=False, index=True
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -138,4 +135,4 @@ class ProfileTraitCorrection(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    trait: Mapped["ProfileTrait"] = relationship(back_populates="corrections")
+    card: Mapped["ProfileCard"] = relationship(back_populates="corrections")

@@ -1,6 +1,6 @@
 from app.models.school import School
 from app.models.user import User
-from app.models.profile import StudentProfile, ProfileTrait, ProfileTraitCorrection
+from app.models.profile import StudentProfile, ProfileCard, ProfileCardCorrection
 from app.models.conversation import Conversation
 from app.models.message import ConversationMessage
 from app.models.refresh_token import RefreshToken
@@ -18,8 +18,8 @@ __all__ = [
     "School",
     "User",
     "StudentProfile",
-    "ProfileTrait",
-    "ProfileTraitCorrection",
+    "ProfileCard",
+    "ProfileCardCorrection",
     "Conversation",
     "ConversationMessage",
     "RefreshToken",
