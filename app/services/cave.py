@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -16,6 +16,16 @@ from app.services.llm import LLMError, chat_completion
 from app.services.safety import SAFETY_SCRIPTS, classify_message
 
 _HISTORY_LIMIT = 12
+
+# A conversation with no message in the last 12h stops being the "active"
+# one a plain visit resumes — the next visit starts fresh instead. Any
+# conversation, active or not, stays resumable by its own id at any time.
+_ACTIVE_WINDOW = timedelta(hours=12)
+
+# A3 runs automatically roughly every this many stored messages within a
+# conversation (not exchanges — see _maybe_extract), rather than at an
+# explicit "end" (there is no end concept anymore).
+_EXTRACTION_TURN_INTERVAL = 20
 
 _PERSONA_SYSTEM_PROMPT = """You are Rafiqi, a warm, curious, playful AI companion for school \
 students, currently talking with {student_name} in "Rafiqi's Cave" — a relaxed space that \
@@ -43,13 +53,6 @@ def _not_found() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail={"error": {"code": ErrorCode.NOT_FOUND, "message": "Conversation not found"}},
-    )
-
-
-def _already_ended() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={"error": {"code": ErrorCode.VALIDATION_ERROR, "message": "Conversation already ended"}},
     )
 
 
@@ -99,6 +102,77 @@ async def _recent_messages(
     return list(reversed(result.scalars().all()))
 
 
+async def _last_message(conversation_id: uuid.UUID, db: AsyncSession) -> ConversationMessage | None:
+    result = await db.execute(
+        select(ConversationMessage)
+        .where(ConversationMessage.conversation_id == conversation_id)
+        .order_by(ConversationMessage.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _message_count(conversation_id: uuid.UUID, db: AsyncSession) -> int:
+    result = await db.execute(
+        select(func.count())
+        .select_from(ConversationMessage)
+        .where(ConversationMessage.conversation_id == conversation_id)
+    )
+    return result.scalar_one()
+
+
+async def _most_recently_active(
+    student_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
+) -> tuple[Conversation, ConversationMessage] | None:
+    """
+    The conversation with the single most recent message across this
+    student's whole history — not just the most recently *started* one, so
+    resuming an old conversation makes it "current" again going forward.
+    N+1 queries; fine at the conversation-per-student volumes this product
+    expects, revisit with a single query if that stops being true.
+    """
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.student_id == student_id, Conversation.school_id == school_id
+        )
+    )
+    best: tuple[Conversation, ConversationMessage] | None = None
+    for conversation in result.scalars().all():
+        last = await _last_message(conversation.id, db)
+        if last is None:
+            continue
+        if best is None or last.created_at > best[1].created_at:
+            best = (conversation, last)
+    return best
+
+
+async def _maybe_extract(
+    conversation: Conversation, db: AsyncSession, *, force: bool = False
+) -> list[ProfileTrait] | None:
+    """
+    Runs A3 over whatever's accumulated since this conversation's last
+    extraction checkpoint, if there's enough of it (or `force`, used when a
+    conversation is going dormant and might never reach the threshold
+    otherwise). Returns None when extraction didn't run *or* ran but failed
+    (LLM/parse error) — either way there's nothing new to report and the
+    checkpoint isn't advanced on failure, so that slice is retried next time.
+    """
+    total = await _message_count(conversation.id, db)
+    unprocessed = total - conversation.last_extracted_message_count
+    if unprocessed <= 0 or (not force and unprocessed < _EXTRACTION_TURN_INTERVAL):
+        return None
+
+    touched = await profile_extraction.extract_and_merge(
+        conversation, db, message_offset=conversation.last_extracted_message_count
+    )
+    if touched is None:
+        return None
+
+    conversation.last_extracted_message_count = total
+    await db.commit()
+    return touched
+
+
 async def get_owned_conversation(
     conversation_id: uuid.UUID, student_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
 ) -> Conversation:
@@ -124,52 +198,65 @@ async def list_messages(conversation_id: uuid.UUID, db: AsyncSession) -> list[Co
     return list(result.scalars().all())
 
 
-async def _open_conversations(
+async def list_conversations(
     student_id: uuid.UUID, school_id: uuid.UUID, db: AsyncSession
-) -> list[Conversation]:
+) -> list[tuple[Conversation, ConversationMessage | None, bool]]:
+    """
+    Every conversation this student has ever had, most recently active
+    first, each paired with its last message (None if somehow empty) and
+    whether it's currently the "active" one — the one a plain
+    POST /conversations resumes. Every conversation here is still directly
+    resumable by id regardless of this flag; there's no "closed" state.
+    """
     result = await db.execute(
-        select(Conversation)
-        .where(
-            Conversation.student_id == student_id,
-            Conversation.school_id == school_id,
-            Conversation.ended_at.is_(None),
+        select(Conversation).where(
+            Conversation.student_id == student_id, Conversation.school_id == school_id
         )
-        .order_by(Conversation.started_at.desc())
     )
-    return list(result.scalars().all())
+    conversations = result.scalars().all()
+
+    rows: list[tuple[Conversation, ConversationMessage | None]] = []
+    for conversation in conversations:
+        rows.append((conversation, await _last_message(conversation.id, db)))
+
+    rows.sort(key=lambda row: row[1].created_at if row[1] else row[0].started_at, reverse=True)
+
+    now = datetime.now(timezone.utc)
+    return [
+        (
+            conversation,
+            last,
+            i == 0 and last is not None and now - last.created_at < _ACTIVE_WINDOW,
+        )
+        for i, (conversation, last) in enumerate(rows)
+    ]
 
 
-async def start_conversation(
+async def get_active_conversation(
     student_id: uuid.UUID, school_id: uuid.UUID, student_name: str, db: AsyncSession
 ) -> tuple[Conversation, ConversationMessage, bool]:
     """
-    Returns the student's current open conversation if one exists — resumed
-    as-is, no new LLM call — otherwise starts a fresh one. Enforces "at most
-    one open conversation per student" as an invariant here rather than
-    relying on the frontend to always call /end: any *other* open
-    conversations found (e.g. from a closed tab, lost connection, or crash
-    that never reached /end) are auto-ended along the way, running A3
-    extraction for each. This is the lazy-cleanup alternative to a
-    background reaper job, which this stack has no infrastructure for.
+    Returns the student's active conversation: the one with the most recent
+    message, if that message is less than `_ACTIVE_WINDOW` old — resumed
+    as-is, no new LLM call. Otherwise starts a fresh conversation, first
+    force-running extraction on whatever's unprocessed in the dormant one so
+    a short conversation that never reached the 20-turn threshold still
+    isn't lost (there's no /end to guarantee that anymore).
+
+    Every past conversation stays directly resumable regardless of this
+    choice — it only decides what a plain "open the Cave" visit lands on.
 
     Third return value is `is_new` — False means the caller got back an
     existing conversation's most recent message, not a fresh greeting; the
     frontend should fetch the full history (GET /conversations/{id}) to
     resume rendering it rather than treating `message` as the only content.
     """
-    open_conversations = await _open_conversations(student_id, school_id, db)
-    if open_conversations:
-        current, *stale = open_conversations
-        for stale_convo in stale:
-            await end_conversation(stale_convo, db)
-
-        messages = await list_messages(current.id, db)
-        if messages:
-            return current, messages[-1], False
-        # An open conversation with zero messages shouldn't normally happen
-        # (start_conversation always writes an opening message before
-        # committing), but fall through to starting fresh rather than
-        # returning something with no content if it ever does.
+    most_recent = await _most_recently_active(student_id, school_id, db)
+    if most_recent is not None:
+        conversation, last_message = most_recent
+        if datetime.now(timezone.utc) - last_message.created_at < _ACTIVE_WINDOW:
+            return conversation, last_message, False
+        await _maybe_extract(conversation, db, force=True)
 
     conversation = Conversation(id=uuid.uuid4(), school_id=school_id, student_id=student_id)
     db.add(conversation)
@@ -207,10 +294,14 @@ async def start_conversation(
 
 async def post_message(
     conversation: Conversation, student_name: str, content: str, db: AsyncSession
-) -> ConversationMessage:
-    if conversation.ended_at is not None:
-        raise _already_ended()
-
+) -> tuple[ConversationMessage, list[ProfileTrait] | None]:
+    """
+    Sends a student message and returns Rafiqi's reply, plus whatever A3
+    extraction produced *if* it happened to run on this turn (see
+    `_maybe_extract` — roughly every 20 stored messages), else None. Any
+    conversation can be posted to at any time, however old — there's no
+    "ended" state to block it.
+    """
     category = await classify_message(content)
 
     if category is not None:
@@ -235,7 +326,8 @@ async def post_message(
         db.add(reply)
         await db.commit()
         await db.refresh(reply)
-        return reply
+        updated_traits = await _maybe_extract(conversation, db)
+        return reply, updated_traits
 
     db.add(
         ConversationMessage(
@@ -271,15 +363,9 @@ async def post_message(
     db.add(reply)
     await db.commit()
     await db.refresh(reply)
-    return reply
 
-
-async def end_conversation(conversation: Conversation, db: AsyncSession) -> list[ProfileTrait]:
-    if conversation.ended_at is not None:
-        raise _already_ended()
-    conversation.ended_at = datetime.now(timezone.utc)
-    await db.commit()
-    return await profile_extraction.extract_and_merge(conversation, db)
+    updated_traits = await _maybe_extract(conversation, db)
+    return reply, updated_traits
 
 
 async def list_flags(school_id: uuid.UUID, db: AsyncSession) -> list[tuple[ConversationMessage, str]]:

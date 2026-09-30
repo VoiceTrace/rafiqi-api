@@ -40,10 +40,21 @@ class ConversationStartOut(BaseModel):
     message: CaveMessageOut
     is_new: bool = Field(
         ...,
-        description="False means an existing open conversation was resumed — "
+        description="False means the student's active conversation was resumed — "
         "`message` is its most recent turn, not a fresh greeting. The "
         "frontend should fetch GET /conversations/{id} for the full history "
         "rather than treating `message` as the only content in that case.",
+    )
+
+
+class SendMessageOut(BaseModel):
+    message: CaveMessageOut
+    updated_traits: list[StudentTraitCardOut] | None = Field(
+        default=None,
+        description="A3 runs automatically roughly every 20 messages in a "
+        "conversation, not on every turn — populated only on the turn that "
+        "actually triggered it (or null). Same narrative-only shape as A6's "
+        "GET /profiles/me, no `score` field.",
     )
 
 
@@ -54,20 +65,20 @@ class CaveConversationOut(BaseModel):
     student_id: uuid.UUID
     school_id: uuid.UUID
     started_at: datetime
-    ended_at: datetime | None
     messages: list[CaveMessageOut]
 
 
-class ConversationEndOut(BaseModel):
-    """
-    A3, surfaced directly: what Rafiqi learned about the student from *this*
-    conversation specifically — not the student's whole profile. Empty when
-    the conversation gave no real signal (e.g. very short, or every message
-    was safety-flagged and excluded). Same narrative-only shape as A6's
-    GET /profiles/me — no `score` field, per the disclosure rule.
-    """
-
-    updated_traits: list[StudentTraitCardOut]
+class ConversationSummaryOut(BaseModel):
+    id: uuid.UUID
+    started_at: datetime
+    last_message_at: datetime
+    last_message_preview: str
+    is_active: bool = Field(
+        ...,
+        description="Whether this is the conversation a plain POST /conversations "
+        "would resume right now. Every conversation is resumable by id "
+        "regardless of this flag — there is no 'closed' state.",
+    )
 
 
 class FlaggedMessageOut(BaseModel):

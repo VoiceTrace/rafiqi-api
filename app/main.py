@@ -89,8 +89,9 @@ tags_metadata = [
     },
     {
         "name": "conversations",
-        "description": "Cave chat sessions between a student and Rafiqi (A2). "
-                       "Each session produces profile trait updates (A3).",
+        "description": "Cave chat threads between a student and Rafiqi (A2). Never explicitly "
+                       "ended — any conversation stays resumable, and profile extraction (A3) "
+                       "runs automatically roughly every 20 messages.",
     },
     {
         "name": "lessons",

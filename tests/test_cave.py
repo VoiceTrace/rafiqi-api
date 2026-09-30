@@ -4,16 +4,21 @@ Cave chat tests (A2/A3 + safety layer) — no database required.
 Tests cover:
 - Safety classifier: flags a category, fails open on error/garbage output
 - post_message: flagged path skips the chat model and returns a scripted
-  reply; clear path calls the chat model normally
-- post_message: rejects sending into an already-ended conversation
+  reply; clear path calls the chat model normally; either way surfaces
+  whatever _maybe_extract produces (or None)
+- get_active_conversation: resumes a conversation with a recent message,
+  starts fresh (force-extracting the dormant one first) once the most
+  recent message is past the 12h active window
 - get_owned_conversation: cross-tenant isolation (wrong school_id -> 404)
-- end_conversation: rejects ending twice, otherwise runs extraction
-- profile_extraction.extract_and_merge: creates a new trait, and merges into
-  an existing one via the weighted-average promotion rule
+- _maybe_extract: triggers at the turn-count threshold (or when forced),
+  advances its checkpoint only when extraction actually completed
+- profile_extraction.extract_and_merge: creates a new trait, merges into an
+  existing one via the score-clamp rule, respects message_offset, and
+  distinguishes "completed with nothing" ([]) from "failed" (None)
 """
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,13 +34,19 @@ from app.services.llm import LLMError
 from app.services.safety import SAFETY_SCRIPTS, classify_message
 
 
-def _fake_conversation(ended_at=None) -> MagicMock:
+def _fake_conversation(last_extracted_message_count: int = 0) -> MagicMock:
     convo = MagicMock(spec=Conversation)
     convo.id = uuid.uuid4()
     convo.student_id = uuid.uuid4()
     convo.school_id = uuid.uuid4()
-    convo.ended_at = ended_at
+    convo.last_extracted_message_count = last_extracted_message_count
     return convo
+
+
+def _fake_message(created_at: datetime | None = None) -> MagicMock:
+    msg = MagicMock(spec=ConversationMessage)
+    msg.created_at = created_at or datetime.now(timezone.utc)
+    return msg
 
 
 # ---------------------------------------------------------------------------
@@ -112,12 +123,16 @@ async def test_post_message_flagged_skips_chat_model_and_returns_script():
     with (
         patch("app.services.cave.classify_message", new=AsyncMock(return_value=SafetyCategory.BULLYING)),
         patch("app.services.cave.chat_completion", new=AsyncMock()) as mock_chat,
+        patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)),
     ):
-        reply = await cave_svc.post_message(convo, "Ahmed", "some kids are being mean to me", mock_db)
+        reply, updated_traits = await cave_svc.post_message(
+            convo, "Ahmed", "some kids are being mean to me", mock_db
+        )
 
     mock_chat.assert_not_awaited()
     assert reply.role == MessageRole.RAFIQI
     assert reply.content == SAFETY_SCRIPTS[SafetyCategory.BULLYING]
+    assert updated_traits is None
 
     student_message = mock_db.add.call_args_list[0].args[0]
     assert student_message.flagged is True
@@ -135,98 +150,151 @@ async def test_post_message_clear_calls_chat_model():
         patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
         patch("app.services.cave._recent_messages", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Tell me more!")) as mock_chat,
+        patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)),
     ):
-        reply = await cave_svc.post_message(convo, "Ahmed", "I like solving puzzles", mock_db)
+        reply, updated_traits = await cave_svc.post_message(
+            convo, "Ahmed", "I like solving puzzles", mock_db
+        )
 
     mock_chat.assert_awaited_once()
     assert reply.content == "Tell me more!"
     assert reply.role == MessageRole.RAFIQI
+    assert updated_traits is None
 
 
 @pytest.mark.asyncio
-async def test_post_message_rejects_ended_conversation():
-    convo = _fake_conversation(ended_at=datetime.now(timezone.utc))
-    mock_db = AsyncMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        await cave_svc.post_message(convo, "Ahmed", "hello?", mock_db)
-
-    assert exc_info.value.status_code == 400
-
-
-# ---------------------------------------------------------------------------
-# start_conversation: at most one open conversation per student
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_start_conversation_resumes_existing_open_conversation():
+async def test_post_message_surfaces_extraction_when_it_runs():
+    """Most turns don't trigger extraction (None) — when one does, the result
+    passes straight through to the caller, whatever it is (including [])."""
     convo = _fake_conversation()
-    last_message = MagicMock(spec=ConversationMessage)
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+    sentinel_traits = [MagicMock(spec=ProfileTrait)]
+
+    with (
+        patch("app.services.cave.classify_message", new=AsyncMock(return_value=None)),
+        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._recent_messages", new=AsyncMock(return_value=[])),
+        patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Tell me more!")),
+        patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=sentinel_traits)) as mock_extract,
+    ):
+        _reply, updated_traits = await cave_svc.post_message(convo, "Ahmed", "hi", mock_db)
+
+    mock_extract.assert_awaited_once_with(convo, mock_db)
+    assert updated_traits is sentinel_traits
+
+
+# ---------------------------------------------------------------------------
+# get_active_conversation: resume-by-recency, no "ended" state
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_active_conversation_resumes_recent_conversation():
+    convo = _fake_conversation()
+    recent_message = _fake_message(datetime.now(timezone.utc) - timedelta(hours=2))
     mock_db = AsyncMock()
 
     with (
-        patch("app.services.cave._open_conversations", new=AsyncMock(return_value=[convo])),
-        patch("app.services.cave.list_messages", new=AsyncMock(return_value=[MagicMock(), last_message])),
+        patch("app.services.cave._most_recently_active", new=AsyncMock(return_value=(convo, recent_message))),
         patch("app.services.cave.chat_completion", new=AsyncMock()) as mock_chat,
     ):
-        returned_convo, message, is_new = await cave_svc.start_conversation(
+        returned_convo, message, is_new = await cave_svc.get_active_conversation(
             convo.student_id, convo.school_id, "Ahmed", mock_db
         )
 
     mock_chat.assert_not_awaited()  # resuming never makes a fresh LLM call
     assert returned_convo is convo
-    assert message is last_message  # most recent turn, not a fresh greeting
+    assert message is recent_message
     assert is_new is False
 
 
 @pytest.mark.asyncio
-async def test_start_conversation_ends_other_stale_open_conversations():
-    current = _fake_conversation()
-    stale_one = _fake_conversation()
-    stale_two = _fake_conversation()
+async def test_get_active_conversation_starts_fresh_when_dormant():
+    """Most recent conversation's last message is >12h old — starts a new
+    conversation, but first force-extracts whatever's unprocessed in the
+    dormant one (no /end exists to guarantee that anymore)."""
+    dormant = _fake_conversation()
+    old_message = _fake_message(datetime.now(timezone.utc) - timedelta(hours=13))
+    student_id, school_id = dormant.student_id, dormant.school_id
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
 
     with (
-        patch(
-            "app.services.cave._open_conversations",
-            new=AsyncMock(return_value=[current, stale_one, stale_two]),  # most recent first
-        ),
-        patch("app.services.cave.list_messages", new=AsyncMock(return_value=[MagicMock()])),
-        patch("app.services.cave.end_conversation", new=AsyncMock()) as mock_end,
+        patch("app.services.cave._most_recently_active", new=AsyncMock(return_value=(dormant, old_message))),
+        patch("app.services.cave._maybe_extract", new=AsyncMock(return_value=None)) as mock_extract,
+        patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
+        patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Hey there!")) as mock_chat,
     ):
-        returned_convo, _message, is_new = await cave_svc.start_conversation(
-            current.student_id, current.school_id, "Ahmed", mock_db
+        conversation, message, is_new = await cave_svc.get_active_conversation(
+            student_id, school_id, "Ahmed", mock_db
         )
 
-    assert returned_convo is current
-    assert is_new is False
-    # The current (most recent) conversation is resumed, not auto-ended —
-    # only the other, older open ones are swept.
-    assert mock_end.await_args_list == [
-        ((stale_one, mock_db),), ((stale_two, mock_db),),
-    ]
+    mock_extract.assert_awaited_once_with(dormant, mock_db, force=True)
+    mock_chat.assert_awaited_once()
+    assert is_new is True
+    assert message.content == "Hey there!"
+    assert conversation.student_id == student_id
+    assert conversation is not dormant  # a genuinely new conversation, not the dormant one
 
 
 @pytest.mark.asyncio
-async def test_start_conversation_creates_fresh_when_none_open():
+async def test_get_active_conversation_creates_fresh_when_none_exist():
     student_id, school_id = uuid.uuid4(), uuid.uuid4()
     mock_db = AsyncMock()
     mock_db.add = MagicMock()
 
     with (
-        patch("app.services.cave._open_conversations", new=AsyncMock(return_value=[])),
+        patch("app.services.cave._most_recently_active", new=AsyncMock(return_value=None)),
         patch("app.services.cave._existing_traits", new=AsyncMock(return_value=[])),
         patch("app.services.cave.chat_completion", new=AsyncMock(return_value="Hey there!")) as mock_chat,
     ):
-        conversation, message, is_new = await cave_svc.start_conversation(
+        conversation, message, is_new = await cave_svc.get_active_conversation(
             student_id, school_id, "Ahmed", mock_db
         )
 
     mock_chat.assert_awaited_once()
     assert is_new is True
     assert message.content == "Hey there!"
-    assert message.role == MessageRole.RAFIQI
     assert conversation.student_id == student_id
+
+
+# ---------------------------------------------------------------------------
+# list_conversations
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_conversations_orders_by_recency_and_flags_active():
+    convo_old = _fake_conversation()
+    convo_new = _fake_conversation()
+    old_msg = _fake_message(datetime.now(timezone.utc) - timedelta(hours=20))
+    new_msg = _fake_message(datetime.now(timezone.utc) - timedelta(hours=1))
+
+    conversations_result = MagicMock()
+    conversations_result.scalars.return_value.all.return_value = [convo_old, convo_new]
+
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = conversations_result
+
+    with patch("app.services.cave._last_message", new=AsyncMock(side_effect=[old_msg, new_msg])):
+        rows = await cave_svc.list_conversations(convo_old.student_id, convo_old.school_id, mock_db)
+
+    assert [conversation.id for conversation, _, _ in rows] == [convo_new.id, convo_old.id]
+    assert rows[0] == (convo_new, new_msg, True)    # most recent + within the active window
+    assert rows[1] == (convo_old, old_msg, False)   # older than 12h -> not active, still listed
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_handles_conversation_with_no_messages():
+    convo = _fake_conversation()
+    conversations_result = MagicMock()
+    conversations_result.scalars.return_value.all.return_value = [convo]
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = conversations_result
+
+    with patch("app.services.cave._last_message", new=AsyncMock(return_value=None)):
+        rows = await cave_svc.list_conversations(convo.student_id, convo.school_id, mock_db)
+
+    assert rows == [(convo, None, False)]
 
 
 # ---------------------------------------------------------------------------
@@ -248,37 +316,93 @@ async def test_get_owned_conversation_wrong_school_raises_404():
 
 
 # ---------------------------------------------------------------------------
-# end_conversation
+# _maybe_extract: the 20-turn (or forced) trigger
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_end_conversation_sets_ended_at_and_runs_extraction():
-    convo = _fake_conversation()
+async def test_maybe_extract_does_nothing_below_threshold():
+    convo = _fake_conversation(last_extracted_message_count=0)
     mock_db = AsyncMock()
-    sentinel_traits = [MagicMock()]
 
-    with patch(
-        "app.services.cave.profile_extraction.extract_and_merge",
-        new=AsyncMock(return_value=sentinel_traits),
-    ) as mock_extract:
-        result = await cave_svc.end_conversation(convo, mock_db)
+    with (
+        patch("app.services.cave._message_count", new=AsyncMock(return_value=19)),
+        patch("app.services.cave.profile_extraction.extract_and_merge", new=AsyncMock()) as mock_extract,
+    ):
+        result = await cave_svc._maybe_extract(convo, mock_db)
 
-    assert convo.ended_at is not None
-    mock_extract.assert_awaited_once_with(convo, mock_db)
-    assert result is sentinel_traits
+    mock_extract.assert_not_awaited()
+    assert result is None
+    assert convo.last_extracted_message_count == 0  # checkpoint untouched
 
 
 @pytest.mark.asyncio
-async def test_end_conversation_rejects_double_end():
-    convo = _fake_conversation(ended_at=datetime.now(timezone.utc))
+async def test_maybe_extract_triggers_at_threshold_and_advances_checkpoint():
+    convo = _fake_conversation(last_extracted_message_count=0)
+    mock_db = AsyncMock()
+    sentinel_traits = [MagicMock(spec=ProfileTrait)]
+
+    with (
+        patch("app.services.cave._message_count", new=AsyncMock(return_value=20)),
+        patch(
+            "app.services.cave.profile_extraction.extract_and_merge",
+            new=AsyncMock(return_value=sentinel_traits),
+        ) as mock_extract,
+    ):
+        result = await cave_svc._maybe_extract(convo, mock_db)
+
+    mock_extract.assert_awaited_once_with(convo, mock_db, message_offset=0)
+    assert result is sentinel_traits
+    assert convo.last_extracted_message_count == 20
+    mock_db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_extract_force_bypasses_threshold():
+    convo = _fake_conversation(last_extracted_message_count=15)
     mock_db = AsyncMock()
 
-    with patch("app.services.cave.profile_extraction.extract_and_merge", new=AsyncMock()) as mock_extract:
-        with pytest.raises(HTTPException) as exc_info:
-            await cave_svc.end_conversation(convo, mock_db)
+    with (
+        patch("app.services.cave._message_count", new=AsyncMock(return_value=18)),  # only 3 unprocessed
+        patch(
+            "app.services.cave.profile_extraction.extract_and_merge",
+            new=AsyncMock(return_value=[]),
+        ) as mock_extract,
+    ):
+        result = await cave_svc._maybe_extract(convo, mock_db, force=True)
 
-    assert exc_info.value.status_code == 400
-    mock_extract.assert_not_awaited()
+    mock_extract.assert_awaited_once_with(convo, mock_db, message_offset=15)
+    assert result == []
+    assert convo.last_extracted_message_count == 18
+
+
+@pytest.mark.asyncio
+async def test_maybe_extract_does_not_advance_checkpoint_on_failure():
+    """extract_and_merge returning None means it failed (LLM/parse error) —
+    the checkpoint must not advance, so this slice is retried next trigger
+    instead of silently skipped forever."""
+    convo = _fake_conversation(last_extracted_message_count=0)
+    mock_db = AsyncMock()
+
+    with (
+        patch("app.services.cave._message_count", new=AsyncMock(return_value=20)),
+        patch("app.services.cave.profile_extraction.extract_and_merge", new=AsyncMock(return_value=None)),
+    ):
+        result = await cave_svc._maybe_extract(convo, mock_db, force=True)
+
+    assert result is None
+    assert convo.last_extracted_message_count == 0
+    mock_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_extract_nothing_unprocessed_is_a_noop():
+    convo = _fake_conversation(last_extracted_message_count=20)
+    mock_db = AsyncMock()
+
+    with patch("app.services.cave._message_count", new=AsyncMock(return_value=20)):
+        result = await cave_svc._maybe_extract(convo, mock_db, force=True)
+
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +463,45 @@ async def test_extract_and_merge_creates_new_trait_when_none_exists():
     assert added_trait.confidence == ConfidenceLabel.CONFIDENT
     assert added_trait.source_conversation_id == convo.id
     mock_db.commit.assert_awaited()
-    # Returned so the caller (end_conversation route) can show "what Rafiqi learned"
     assert result == [added_trait]
     mock_db.refresh.assert_awaited_once_with(added_trait)
+
+
+@pytest.mark.asyncio
+async def test_extract_and_merge_respects_message_offset():
+    """Only messages after the offset are sent to the model — the checkpoint
+    exists precisely so a long conversation doesn't resend/reprocess its
+    earlier messages on every pass."""
+    convo = _fake_conversation()
+    old_message = ConversationMessage(
+        id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
+        role=MessageRole.STUDENT, content="OLD MESSAGE — already processed",
+    )
+    new_message = ConversationMessage(
+        id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
+        role=MessageRole.STUDENT, content="NEW MESSAGE — not yet processed",
+    )
+
+    messages_result = MagicMock()
+    messages_result.scalars.return_value.all.return_value = [old_message, new_message]
+    profile_result = MagicMock()
+    profile_result.scalar_one_or_none.return_value = None
+    traits_result = MagicMock()
+    traits_result.scalars.return_value.all.return_value = []
+
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+    mock_db.add = MagicMock()
+
+    with patch(
+        "app.services.profile_extraction.chat_completion",
+        new=AsyncMock(return_value=_extraction_response(0.9)),
+    ) as mock_chat:
+        await profile_extraction.extract_and_merge(convo, mock_db, message_offset=1)
+
+    sent_transcript = mock_chat.call_args.kwargs["messages"][1]["content"]
+    assert "NEW MESSAGE" in sent_transcript
+    assert "OLD MESSAGE" not in sent_transcript
 
 
 @pytest.mark.asyncio
@@ -382,7 +542,7 @@ async def test_extract_and_merge_clamps_score_movement_for_existing_trait():
     ):
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
-    # A3 promotion rule (v2): model proposes 0.9, but a single session can only move an
+    # A3 promotion rule (v2): model proposes 0.9, but a single pass can only move an
     # existing score by up to 0.3 -> 0.5 + 0.3 = 0.8, not straight to the model's 0.9.
     assert existing_trait.score == pytest.approx(0.8)
     assert existing_trait.confidence == ConfidenceLabel.CONFIDENT  # 0.8 crosses the 0.7 threshold
@@ -452,10 +612,43 @@ async def test_extract_and_merge_excludes_flagged_messages_from_transcript():
     with patch("app.services.profile_extraction.chat_completion", new=AsyncMock()) as mock_chat:
         result = await profile_extraction.extract_and_merge(convo, mock_db)
 
-    # Transcript was empty once the flagged turn was excluded -> no LLM call, no commit
+    # Transcript was empty once the flagged turn was excluded -> no LLM call, no commit.
+    # This is "completed with nothing" ([]), not "failed" (None) — caller should
+    # still advance its checkpoint, there's nothing left worth retrying.
     mock_chat.assert_not_awaited()
     mock_db.commit.assert_not_awaited()
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_extract_and_merge_returns_none_on_llm_failure():
+    """Distinct from the empty-transcript case: a real failure must be
+    signaled differently (None) so the caller knows not to advance its
+    checkpoint and to retry this slice later."""
+    convo = _fake_conversation()
+    message = ConversationMessage(
+        id=uuid.uuid4(), school_id=convo.school_id, conversation_id=convo.id,
+        role=MessageRole.STUDENT, content="something ordinary",
+    )
+
+    messages_result = MagicMock()
+    messages_result.scalars.return_value.all.return_value = [message]
+    profile_result = MagicMock()
+    profile_result.scalar_one_or_none.return_value = None
+    traits_result = MagicMock()
+    traits_result.scalars.return_value.all.return_value = []
+
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [messages_result, profile_result, traits_result]
+
+    with patch(
+        "app.services.profile_extraction.chat_completion",
+        new=AsyncMock(side_effect=LLMError("gateway down")),
+    ):
+        result = await profile_extraction.extract_and_merge(convo, mock_db)
+
+    assert result is None
+    mock_db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

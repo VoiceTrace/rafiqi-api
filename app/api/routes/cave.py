@@ -9,9 +9,10 @@ from app.schemas.cave import (
     CaveConversationOut,
     CaveMessageIn,
     CaveMessageOut,
-    ConversationEndOut,
     ConversationStartOut,
+    ConversationSummaryOut,
     FlaggedMessageOut,
+    SendMessageOut,
 )
 from app.schemas.profile import StudentTraitCardOut
 from app.services import cave as cave_svc
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
     "",
     response_model=ConversationStartOut,
     status_code=200,
-    summary="Start or resume a Cave chat",
+    summary="Start or resume the active Cave chat",
     responses={502: {"description": "Rafiqi is unavailable right now."}},
 )
 async def start_conversation(
@@ -33,17 +34,21 @@ async def start_conversation(
     db: AsyncSession = Depends(get_db_session),
 ) -> ConversationStartOut:
     """
-    Returns the student's current open conversation if one exists (resumed
-    as-is — fetch GET /conversations/{id} for its full history), otherwise
-    starts a fresh one and returns Rafiqi's opening message (`is_new: true`,
-    `201`). At most one conversation is ever left open per student: any
-    *other* stale open conversation found (e.g. an abandoned tab) is
-    auto-ended along the way, running profile extraction for it.
+    Returns the student's active conversation if one exists — the one with
+    a message less than 12h old — resumed as-is (fetch GET
+    /conversations/{id} for its full history). Otherwise starts a fresh one
+    and returns Rafiqi's opening message (`is_new: true`, `201`).
+
+    Every conversation stays individually resumable at any time regardless
+    (see GET /conversations, POST /conversations/{id}/messages) — this only
+    decides what a plain "open the Cave" visit lands on. A dormant
+    conversation left behind by this call has any unprocessed messages
+    swept into a profile update first, so nothing from it is lost.
 
     Student access only.
     """
     student = await user_svc.get_me(current_user.id, db)
-    conversation, message, is_new = await cave_svc.start_conversation(
+    conversation, message, is_new = await cave_svc.get_active_conversation(
         current_user.id, current_user.school_id, student.full_name, db
     )
     response.status_code = status.HTTP_201_CREATED if is_new else status.HTTP_200_OK
@@ -52,6 +57,34 @@ async def start_conversation(
         message=CaveMessageOut.model_validate(message),
         is_new=is_new,
     )
+
+
+@router.get(
+    "",
+    response_model=list[ConversationSummaryOut],
+    summary="List my conversations",
+)
+async def list_conversations(
+    current_user: Annotated[CurrentUser, Depends(require_student)],
+    db: AsyncSession = Depends(get_db_session),
+) -> list[ConversationSummaryOut]:
+    """
+    Every conversation this student has ever had, most recently active
+    first, so they can browse and resume any past one — not just the
+    current active thread. Student access only.
+    """
+    rows = await cave_svc.list_conversations(current_user.id, current_user.school_id, db)
+    return [
+        ConversationSummaryOut(
+            id=conversation.id,
+            started_at=conversation.started_at,
+            last_message_at=last.created_at,
+            last_message_preview=last.content[:140],
+            is_active=is_active,
+        )
+        for conversation, last, is_active in rows
+        if last is not None  # a conversation with zero messages shouldn't exist, but guard anyway
+    ]
 
 
 @router.get(
@@ -88,11 +121,10 @@ async def list_flags(
 
 @router.post(
     "/{conversation_id}/messages",
-    response_model=CaveMessageOut,
+    response_model=SendMessageOut,
     summary="Send a message in the Cave",
     responses={
         404: {"description": "Conversation not found."},
-        400: {"description": "Conversation already ended."},
         502: {"description": "Rafiqi is unavailable right now."},
     },
 )
@@ -101,54 +133,36 @@ async def post_message(
     body: CaveMessageIn,
     current_user: Annotated[CurrentUser, Depends(require_student)],
     db: AsyncSession = Depends(get_db_session),
-) -> CaveMessageOut:
+) -> SendMessageOut:
     """
-    Sends a student message and returns Rafiqi's reply.
+    Sends a student message and returns Rafiqi's reply. Works on any of the
+    student's conversations at any time, however old — there's no "ended"
+    state.
 
     Every message is run through a deterministic safety classifier first. If
     it's flagged (self-harm, abuse, bullying, distress, or cheating), the
     message is stored flagged and a fixed scripted reply is returned instead
     of a model-generated one — the chat model is never called for a flagged
-    turn. Student access only, own conversation only.
+    turn.
+
+    Profile extraction (A3) runs automatically roughly every 20 messages in
+    a conversation — `updated_traits` is populated only on the turn that
+    happens to trigger it, null otherwise.
+
+    Student access only, own conversation only.
     """
     student = await user_svc.get_me(current_user.id, db)
     conversation = await cave_svc.get_owned_conversation(
         conversation_id, current_user.id, current_user.school_id, db
     )
-    reply = await cave_svc.post_message(conversation, student.full_name, body.content, db)
-    return CaveMessageOut.model_validate(reply)
-
-
-@router.post(
-    "/{conversation_id}/end",
-    response_model=ConversationEndOut,
-    summary="End a Cave chat",
-    responses={
-        404: {"description": "Conversation not found."},
-        400: {"description": "Conversation already ended."},
-    },
-)
-async def end_conversation(
-    conversation_id: uuid.UUID,
-    current_user: Annotated[CurrentUser, Depends(require_student)],
-    db: AsyncSession = Depends(get_db_session),
-) -> ConversationEndOut:
-    """
-    Ends the conversation and runs profile extraction (A3) against its
-    transcript, merging observations into the student's profile traits.
-    Returns exactly what changed from *this* conversation — `updated_traits`
-    is empty if it gave no real signal (e.g. very short, or everything said
-    was safety-flagged and excluded). For the student's whole profile, use
-    GET /profiles/me instead.
-
-    Student access only, own conversation only.
-    """
-    conversation = await cave_svc.get_owned_conversation(
-        conversation_id, current_user.id, current_user.school_id, db
-    )
-    touched = await cave_svc.end_conversation(conversation, db)
-    return ConversationEndOut(
-        updated_traits=[StudentTraitCardOut.model_validate(t) for t in touched]
+    reply, updated_traits = await cave_svc.post_message(conversation, student.full_name, body.content, db)
+    return SendMessageOut(
+        message=CaveMessageOut.model_validate(reply),
+        updated_traits=(
+            [StudentTraitCardOut.model_validate(t) for t in updated_traits]
+            if updated_traits is not None
+            else None
+        ),
     )
 
 
@@ -164,7 +178,8 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db_session),
 ) -> CaveConversationOut:
     """
-    Fetches a conversation and its full message history, for resuming a chat.
+    Fetches a conversation and its full message history, for resuming a chat
+    — any conversation of the student's, not just the active one.
     Student access only, own conversation only.
     """
     conversation = await cave_svc.get_owned_conversation(
@@ -176,6 +191,5 @@ async def get_conversation(
         student_id=conversation.student_id,
         school_id=conversation.school_id,
         started_at=conversation.started_at,
-        ended_at=conversation.ended_at,
         messages=[CaveMessageOut.model_validate(m) for m in messages],
     )

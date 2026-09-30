@@ -84,30 +84,42 @@ def _profile_context(existing_by_key: dict[str, ProfileTrait]) -> str:
     return f"What you currently believe about this student:\n{lines}"
 
 
-async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> list[ProfileTrait]:
+async def extract_and_merge(
+    conversation: Conversation, db: AsyncSession, message_offset: int = 0
+) -> list[ProfileTrait] | None:
     """
-    A3: reads the conversation transcript and merges observations into the
-    student's ProfileTrait rows. The model is shown the *current* profile
-    state and asked to propose fills (for gaps) or changes (for existing
-    traits the conversation actually bears on) — diff-based by construction,
-    since the model is told to omit anything it has no reason to touch.
-    Code only clamps how far a single session can move an existing score (see
-    `_MAX_SCORE_DELTA_PER_SESSION`), as a stability guard the model itself
-    doesn't need to reason about. Flagged (safety) turns are excluded from
-    the transcript — a crisis/cheating moment isn't a learning-style signal.
+    A3: reads conversation messages after `message_offset` and merges
+    observations into the student's ProfileTrait rows. The model is shown
+    the *current* profile state and asked to propose fills (for gaps) or
+    changes (for existing traits the conversation actually bears on) —
+    diff-based by construction, since the model is told to omit anything it
+    has no reason to touch. Code only clamps how far a single pass can move
+    an existing score (see `_MAX_SCORE_DELTA_PER_SESSION`), as a stability
+    guard the model itself doesn't need to reason about. Flagged (safety)
+    turns are excluded from the transcript — a crisis/cheating moment isn't
+    a learning-style signal.
 
-    Returns the traits created or updated by this call (possibly empty, e.g.
-    a short chat with no real signal) — the FE's "what Rafiqi learned about
-    you today" moment at the end of a session.
+    `message_offset` skips messages already folded into a previous pass —
+    this runs periodically over a conversation's life (see cave.py's
+    `_maybe_extract`), not just once at the end, so re-sending and
+    re-processing the whole transcript every time would grow unboundedly
+    and double-count already-applied signal.
+
+    Return value distinguishes two different kinds of "nothing to report":
+    - `[]` — the pass *completed* (possibly with zero real observations, or
+      an empty/all-flagged slice) — caller should still advance its
+      checkpoint, there's nothing left to retry.
+    - `None` — the pass *failed* (LLM/parse error) — caller should NOT
+      advance its checkpoint, so this slice is retried on the next trigger
+      instead of silently skipped forever.
     """
     messages_result = await db.execute(
         select(ConversationMessage)
         .where(ConversationMessage.conversation_id == conversation.id)
         .order_by(ConversationMessage.created_at)
     )
-    transcript = "\n".join(
-        f"{msg.role}: {msg.content}" for msg in messages_result.scalars().all() if not msg.flagged
-    )
+    new_messages = messages_result.scalars().all()[message_offset:]
+    transcript = "\n".join(f"{msg.role}: {msg.content}" for msg in new_messages if not msg.flagged)
     if not transcript.strip():
         return []
 
@@ -146,7 +158,7 @@ async def extract_and_merge(conversation: Conversation, db: AsyncSession) -> lis
         observations = parse_json_object(raw).get("observations", [])
     except (LLMError, json.JSONDecodeError, AttributeError) as exc:
         logger.warning("Profile extraction failed for conversation %s: %s", conversation.id, exc)
-        return []
+        return None
 
     touched: list[ProfileTrait] = []
 
