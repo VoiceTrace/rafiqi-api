@@ -48,8 +48,14 @@ class ConversationMessage(Base):
     flagged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     flag_category: Mapped[str | None] = mapped_column(String(20), nullable=True)  # SafetyCategory
 
+    # clock_timestamp(), not now(): a student message and Rafiqi's reply are
+    # both inserted in the same transaction, and now()/CURRENT_TIMESTAMP is
+    # frozen for the whole transaction in Postgres — both rows would get the
+    # identical created_at, making "most recent message" ordering (used
+    # throughout cave.py for resume/active-conversation logic) non-
+    # deterministic on ties. clock_timestamp() evaluates per-statement.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
