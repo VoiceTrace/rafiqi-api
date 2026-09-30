@@ -4,13 +4,15 @@ No database required (mocked AsyncSession, matching this repo's convention).
 
 Tests cover:
 - get_own_profile_view: always returns exactly 7 cards, in fixed order,
-  with null readings when nothing's been extracted (no profile at all, or
-  a profile missing some cards)
+  with null readings/confidence when nothing's been extracted (no profile
+  at all, or a profile missing some cards)
 - flag_card: 404 for an invalid card id, and for a card nothing's been
   extracted for yet (own or otherwise)
 - flag_card: applies the model's revised reading/confidence/acknowledgement
 - flag_card: fails safe (confidence knocked down) when the LLM call errors
-- LearnerCardOut never exposes score/confidence (A6 disclosure rule)
+- confidence_level_from_score: the low/quiet/confident thresholds
+- LearnerCardOut exposes a qualitative confidence label, never the raw
+  score (A6 disclosure rule)
 """
 import json
 import uuid
@@ -20,7 +22,13 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.profile import ProfileCard, ProfileCardCorrection
-from app.schemas.profile import CARD_DEFINITIONS, CardKey, LearnerCardOut
+from app.schemas.profile import (
+    CARD_DEFINITIONS,
+    CardKey,
+    ConfidenceLevel,
+    LearnerCardOut,
+    confidence_level_from_score,
+)
 from app.services import profile as profile_svc
 from app.services.llm import LLMError
 
@@ -56,6 +64,7 @@ async def test_get_own_profile_view_all_null_when_no_profile():
 
     assert len(view.cards) == 7
     assert all(card.reading is None for card in view.cards)
+    assert all(card.confidence is None for card in view.cards)
 
 
 @pytest.mark.asyncio
@@ -79,8 +88,10 @@ async def test_get_own_profile_view_is_always_seven_cards_in_fixed_order():
 
     how_you_learn = next(c for c in view.cards if c.id == CARD_DEFINITIONS[_CARD_KEY].id)
     assert how_you_learn.reading == card.reading
+    assert how_you_learn.confidence == ConfidenceLevel.CONFIDENT  # score=0.8 from _fake_card
     others = [c for c in view.cards if c.id != CARD_DEFINITIONS[_CARD_KEY].id]
     assert all(c.reading is None for c in others)  # untouched cards stay null, not missing
+    assert all(c.confidence is None for c in others)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +153,8 @@ async def test_flag_card_applies_llm_verdict():
     assert isinstance(updated, LearnerCardOut)
     assert updated.reading == "You actually prefer seeing a worked example before trying it yourself."
     assert acknowledgement == "Good to know — I'll adjust how I explain things."
-    assert card.confidence_score == 0.4  # internal only, not on `updated`
+    assert card.confidence_score == 0.4  # internal raw score
+    assert updated.confidence == ConfidenceLevel.QUIET  # 0.4 -> the derived label, not 0.4 itself
 
     correction = next(
         call.args[0] for call in mock_db.add.call_args_list if isinstance(call.args[0], ProfileCardCorrection)
@@ -176,18 +188,39 @@ async def test_flag_card_falls_back_conservatively_on_llm_error():
     assert card.confidence_score == pytest.approx(0.6)  # conservatively knocked down by 0.3
     assert updated.reading == original_reading  # left as-is, not overwritten with nothing
     assert acknowledgement == profile_svc._FALLBACK_ACKNOWLEDGEMENT
+    assert updated.confidence == ConfidenceLevel.QUIET  # 0.9 - 0.3 = 0.6, still in the QUIET band
     mock_db.commit.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
-# A6 disclosure rule: no score/confidence in the student-facing schema
+# A6 disclosure rule: a qualitative label only, never the raw numeric score
 # ---------------------------------------------------------------------------
 
-def test_learner_card_out_has_no_score_or_confidence_field():
+def test_learner_card_out_has_no_raw_score_field():
     assert "score" not in LearnerCardOut.model_fields
-    assert "confidence" not in LearnerCardOut.model_fields
     assert "confidence_score" not in LearnerCardOut.model_fields
 
 
 def test_learner_card_out_matches_the_exact_frontend_contract():
-    assert set(LearnerCardOut.model_fields) == {"id", "icon", "title", "captures", "reading"}
+    assert set(LearnerCardOut.model_fields) == {
+        "id", "icon", "title", "captures", "reading", "confidence",
+    }
+
+
+# ---------------------------------------------------------------------------
+# confidence_level_from_score: the low/quiet/confident thresholds
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [
+        (0.0, ConfidenceLevel.LOW),
+        (0.39, ConfidenceLevel.LOW),
+        (0.4, ConfidenceLevel.QUIET),
+        (0.69, ConfidenceLevel.QUIET),
+        (0.7, ConfidenceLevel.CONFIDENT),
+        (1.0, ConfidenceLevel.CONFIDENT),
+    ],
+)
+def test_confidence_level_from_score_thresholds(score, expected):
+    assert confidence_level_from_score(score) == expected
