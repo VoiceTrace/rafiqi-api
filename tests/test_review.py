@@ -21,8 +21,14 @@ from app.models.review import MasteryRecord, ReviewAttempt, ReviewLesson, Review
 from app.schemas.review import ReviewMessage
 from app.services.review import ReviewError, apply_message, initial_state, mastery_band, session_public
 from app.services.review_seed import LESSON
-from app.services.review_catalog import seed_catalog
-from app.services.review_assessment import AssessmentMetadataError, classify_error
+from app.services.review_catalog import catalog_seed, seed_catalog
+from app.services.review_assessment import (
+    AssessmentMetadataError,
+    ReviewErrorType,
+    classify_error,
+)
+
+CATALOG = catalog_seed()
 
 
 def command(action, version=0, question="force-pairs", **kwargs):
@@ -330,7 +336,7 @@ async def test_catalog_hierarchy_locales_and_independent_sessions(api):
     client, _, _, factory = api
     subjects = (await client.get("/study-subjects")).json()
     arabic = (await client.get("/study-subjects?locale=ar")).json()
-    assert {s["id"] for s in subjects} == {"physics", "mathematics"}
+    assert {s["id"] for s in subjects} == {s["id"] for s in CATALOG["subjects"]}
     assert [s["id"] for s in subjects] == [s["id"] for s in arabic]
     assert subjects[0]["title"] != arabic[0]["title"]
     found = []
@@ -348,7 +354,8 @@ async def test_catalog_hierarchy_locales_and_independent_sessions(api):
                 assert lesson["concept_refs"][0]["id"] == translated["concept_refs"][0]["id"]
                 assert "questions" not in lesson and "answer" not in json.dumps(lesson)
                 found.append(lesson["id"])
-    assert len(found) == 4 and len(set(found)) == 4
+    assert set(found) == {lesson["id"] for lesson in CATALOG["lessons"]}
+    assert len(found) == len(set(found))
     for path in ("/study-subjects/missing/chapters", "/study-lessons?chapter_id=missing"):
         response = await client.get(path)
         assert response.status_code == 404
@@ -366,7 +373,7 @@ async def test_catalog_hierarchy_locales_and_independent_sessions(api):
     async with factory() as db:
         await seed_catalog(db)
         await seed_catalog(db)
-    assert len((await client.get("/study-lessons")).json()) == 4
+    assert len((await client.get("/study-lessons")).json()) == len(CATALOG["lessons"])
     assert (await client.get("/study-sessions/by-lesson/balanced-forces")).json()["attempts"] == 1
 
 
@@ -382,3 +389,21 @@ def test_content_driven_hints_and_missing_translation():
     with pytest.raises(ReviewError) as error:
         session_public(session, "ar")
     assert error.value.code == "lesson_translation_unavailable"
+
+
+def test_review_error_taxonomy_matches_constraint():
+    """The allow-list in the table has to admit every code classify_error can emit.
+
+    They are declared in two places — the enum and the CHECK constraint — so a new
+    misconception that is only added to the enum would fail at insert time, deep in
+    a review session, instead of here.
+    """
+    constraint = next(
+        check for check in ReviewAttempt.__table__.constraints
+        if getattr(check, "name", None) == "ck_review_attempt_error_type"
+    )
+    allowed = {
+        fragment.strip().strip("'")
+        for fragment in str(constraint.sqltext).split("IN (")[1].rstrip(")").split(",")
+    }
+    assert allowed == {error.value for error in ReviewErrorType}

@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: rafiqi
       POSTGRES_DB: rafiqi
     ports:
-      - "5432:5432"
+      # Bound to loopback on 5433: another local PostgreSQL holds 127.0.0.1:5432,
+      # and a wildcard 5432 publish loses to it for every "localhost" connection.
+      - "127.0.0.1:5433:5432"
     volumes:
       - rafiqi_db_data:/var/lib/postgresql/data
     restart: unless-stopped
