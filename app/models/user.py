@@ -23,6 +23,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Set for students; used to scope grade-based homework publication.
+    grade_level: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)

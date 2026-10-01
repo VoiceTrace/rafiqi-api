@@ -2,6 +2,21 @@
 
 Read this file before writing any code. It defines the architecture rules for this codebase. Violating these rules will cause review failure.
 
+## Before you start
+
+Read `.claude/STATUS.md`, `.claude/CLAUDE.md`, and `docs/artifact.md`. The Claude
+instructions and skills in `.claude/skills/` apply to every coding agent, not only to
+Claude:
+
+| Skill | When |
+|---|---|
+| `fastapi-conventions` | Adding or editing routes, schemas, services |
+| `python-architecture` | Reviewing agent-generated code for layer violations |
+| `db-migrations` | Any model or table change |
+| `testing` | Writing tests, before marking work complete |
+| `qa` | Verifying a ticket against a real stack and browser |
+| `commit-conventions` | Staging and committing |
+
 ---
 
 ## Layer rules — the most important section
@@ -245,3 +260,19 @@ All route functions and service functions are `async def`. All SQLAlchemy calls 
 - [ ] Any `HTTPException` raised in route uses the structured `detail` shape, not a bare string.
 - [ ] Error codes come from `ErrorCode` enum in `app/core/errors.py`.
 - [ ] Auth dependency is declared on the function signature.
+
+---
+
+## Working rules
+
+These are about how you operate on the repo and the machine, not about code shape:
+
+- **Preserve existing user changes.** Never commit secrets, database data, virtual
+  environments, or runtime logs.
+- **Verify the configured database is local** before running migrations, seeding, or
+  integration tests. Integration fixtures refuse any database whose name does not end
+  in `_test`; keep that guard.
+- **Tests own their fixtures** and clean up after themselves, rather than altering
+  existing school data.
+- **Report tested behaviour separately from scaffolded or deferred functionality.**
+  "Implemented" and "verified" are different claims — say which one you mean.

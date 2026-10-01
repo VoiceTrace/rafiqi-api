@@ -97,6 +97,19 @@ pytest
 
 All tests run without a database connection — models, schemas, auth logic, and confidence threshold are tested at the unit level.
 
+The homework route integration test additionally requires a migrated, local
+PostgreSQL database whose name ends in `_test`. It is skipped unless
+`TEST_DATABASE_URL` is set. Fixture transactions roll back the test's schools,
+users, assignments, submissions, and mastery updates, including service commits.
+
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql+asyncpg://rafiqi:rafiqi@localhost:5432/rafiqi_test'
+python -m pytest tests/test_homework_integration.py -q
+```
+
+Use a separate database for this check; do not point it at a shared or production
+database. Apply the project's Alembic migrations to the test database first.
+
 ## Project Structure
 
 ```

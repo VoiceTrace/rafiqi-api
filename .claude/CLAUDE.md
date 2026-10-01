@@ -121,6 +121,7 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - **ORM**: SQLAlchemy (async driver)
 - **Migrations**: Alembic — see `.claude/skills/db-migrations/SKILL.md`
 - **Testing**: pytest + pytest-asyncio + httpx.AsyncClient — see `.claude/skills/testing/SKILL.md`
+- **QA**: real stack + browser verification of a ticket's acceptance criteria — see `.claude/skills/qa/SKILL.md`
 - **API conventions**: see `.claude/skills/fastapi-conventions/SKILL.md`
 - **Architecture enforcement**: see `.claude/skills/python-architecture/SKILL.md` — load this when reviewing agent-generated code; catches DB-in-controller, HTTPException-in-service, missing response_model, bare error strings
 - **Multi-tenancy**: row-level `school_id` FK on every student/teacher/school table — hard rule, not optional
@@ -134,5 +135,6 @@ Relational store for school/teacher/student/roles, multi-tenant isolated per sch
 - This file should be updated as decisions get made — treat it as living project memory, not a one-time brief.
 - When ticket-plan details and earlier prose descriptions conflict anywhere in this file, the ticket-plan wording wins.
 - Always read `.claude/STATUS.md` at the start of a session before doing anything else — it records exactly where work stopped.
-- Apply the relevant skill(s) from `.claude/skills/` for every ticket: `fastapi-conventions` when adding routes/schemas/services, `db-migrations` when touching models/tables, `testing` before marking any ticket done, `python-architecture` when reviewing any agent-generated code.
+- Apply the relevant skill(s) from `.claude/skills/` for every ticket: `fastapi-conventions` when adding routes/schemas/services, `db-migrations` when touching models/tables, `testing` while writing tests, `python-architecture` when reviewing any agent-generated code, and `qa` before marking any ticket done.
+- `testing` and `qa` are different steps and both are required. `testing` is about writing good tests; `qa` is about proving the feature actually works — real API, real frontend, real browser, every acceptance criterion. A green suite is not QA: a collection error once hid nine tests while the summary still read "92 passed".
 - **Agent code (Codex)**: `AGENTS.md` at the repo root is the authoritative instruction file for Codex. If Codex-generated code shows DB queries in route files, `HTTPException` in service files, or missing `response_model`, run the `python-architecture` skill and flag it before merging.
