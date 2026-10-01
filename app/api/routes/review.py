@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, get_db_session, require_student
+from app.api.deps import CurrentUser, get_current_user, get_db_session, require_student
 from app.core.errors import ErrorCode
 from app.schemas.review import AttemptOut, ChapterOut, SubjectOut, CreateReview, LessonOut, Locale, MasteryOut, ReviewMessage, SessionOut
 from app.services import review as svc
@@ -12,6 +12,7 @@ from app.services import review_catalog as catalog
 
 router = APIRouter(tags=["study-review"])
 Student = Annotated[CurrentUser, Depends(require_student)]
+Authenticated = Annotated[CurrentUser, Depends(get_current_user)]
 Database = Annotated[AsyncSession, Depends(get_db_session)]
 
 _ERROR_CODES = {404: ErrorCode.NOT_FOUND, 409: ErrorCode.CONFLICT, 422: ErrorCode.VALIDATION_ERROR}
@@ -23,7 +24,7 @@ def _http(error: svc.ReviewError) -> HTTPException:
 
 
 @router.get("/study-subjects", response_model=list[SubjectOut])
-async def subjects(user: Student, db: Database, locale: Locale = "en") -> list[SubjectOut]:
+async def subjects(user: Authenticated, db: Database, locale: Locale = "en") -> list[SubjectOut]:
     try:
         return await catalog.list_subjects(db, locale)
     except svc.ReviewError as error:
@@ -31,7 +32,7 @@ async def subjects(user: Student, db: Database, locale: Locale = "en") -> list[S
 
 
 @router.get("/study-subjects/{subject_id}/chapters", response_model=list[ChapterOut])
-async def chapters(subject_id: str, user: Student, db: Database, locale: Locale = "en") -> list[ChapterOut]:
+async def chapters(subject_id: str, user: Authenticated, db: Database, locale: Locale = "en") -> list[ChapterOut]:
     try:
         return await catalog.list_chapters(db, subject_id, locale)
     except svc.ReviewError as error:
@@ -39,7 +40,7 @@ async def chapters(subject_id: str, user: Student, db: Database, locale: Locale 
 
 
 @router.get("/study-lessons", response_model=list[LessonOut])
-async def lessons(user: Student, db: Database, locale: Locale = "en", chapter_id: str | None = None) -> list[LessonOut]:
+async def lessons(user: Authenticated, db: Database, locale: Locale = "en", chapter_id: str | None = None) -> list[LessonOut]:
     try:
         return await svc.list_lessons(db, locale, chapter_id)
     except svc.ReviewError as error:
@@ -47,7 +48,7 @@ async def lessons(user: Student, db: Database, locale: Locale = "en", chapter_id
 
 
 @router.get("/study-lessons/{lesson_id}", response_model=LessonOut)
-async def lesson(lesson_id: str, user: Student, db: Database, locale: Locale = "en") -> LessonOut:
+async def lesson(lesson_id: str, user: Authenticated, db: Database, locale: Locale = "en") -> LessonOut:
     try:
         return await svc.get_lesson(db, lesson_id, locale)
     except svc.ReviewError as error:

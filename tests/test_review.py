@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
-from app.api.deps import CurrentUser, require_student, get_db_session
+from app.api.deps import CurrentUser, get_current_user, require_student, get_db_session
 from app.core.database import Base
 from app.core.security import create_access_token
 from app.main import app
@@ -109,7 +109,7 @@ async def test_role_gate_without_dependency_override():
         for path in ("/study-lessons", "/study-subjects", "/study-subjects/physics/chapters", "/study-mastery"):
             assert (await client.get(path)).status_code in (401, 403)
         token = create_access_token(uuid.uuid4(), uuid.uuid4(), "teacher")
-        assert (await client.get("/study-lessons", headers={"Authorization": f"Bearer {token}"})).status_code == 403
+        assert (await client.get("/study-mastery", headers={"Authorization": f"Bearer {token}"})).status_code == 403
 
 
 @pytest_asyncio.fixture
@@ -135,6 +135,7 @@ async def api():
     async def database():
         async with factory() as db: yield db
     app.dependency_overrides[require_student] = user
+    app.dependency_overrides[get_current_user] = user
     app.dependency_overrides[get_db_session] = database
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client, identity, other_id, factory
