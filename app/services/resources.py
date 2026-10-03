@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.models.review import ReviewGrade, ReviewLesson, ReviewLessonGrade, ReviewChapter, ReviewSubject
 from app.models.resources import TeacherClass, TeacherClassStudent, TeacherResource, LessonMaterial, MaterialCompletion
 from app.models.user import User, UserRole
+from app.services.notifications import enqueue_assignment_event
 
 
 class ResourceError(Exception):
@@ -147,6 +148,8 @@ async def create_assignment(db, school_id, teacher_id, class_id, lesson_id, reso
     else:
         row = LessonMaterial(school_id=school_id, class_id=class_id, resource_id=resource_id, lesson_id=lesson_id, required=required, added_by=teacher_id)
         db.add(row)
+        await db.flush()
+        await enqueue_assignment_event(db, school_id, row.id)
     await db.commit()
     await db.refresh(row)
     return row

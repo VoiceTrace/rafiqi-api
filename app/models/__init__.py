@@ -1,4 +1,5 @@
 from app.models.school import School
+from app.models.notifications import Notification, NotificationOutbox, PushInstallation, NotificationDelivery
 from app.models.user import User
 from app.models.profile import StudentProfile, ProfileTrait
 from app.models.conversation import Conversation
