@@ -48,12 +48,25 @@ class ReviewAttempt(Base):
         CheckConstraint("correctness_score >= 0 AND correctness_score <= 1", name="ck_review_attempt_score"),
         CheckConstraint("hint_level >= 0", name="ck_review_attempt_hint_level"),
         CheckConstraint("attempt_number >= 1", name="ck_review_attempt_number"),
+        # Kept in step with ReviewErrorType by test_review_error_taxonomy_matches_constraint.
         CheckConstraint(
             "error_type IS NULL OR error_type IN ("
-            "'force_pair_unequal_magnitude', 'force_pair_missing_reaction', "
-            "'force_pair_incomplete_distinct_objects', 'force_pair_missing_distinct_objects', "
-            "'balanced_force_means_stopped', 'kinetic_energy_requires_motion', "
-            "'equivalent_fraction_denominator_only')",
+            "'balanced_force_means_stopped', 'change_incomplete_new_substance', "
+            "'change_missing_new_substance', 'decimal_more_digits_means_larger', "
+            "'dissolving_is_a_chemical_change', 'energy_created_from_nothing', "
+            "'energy_incomplete_transformation_chain', 'energy_missing_transformation_chain', "
+            "'equivalent_fraction_denominator_only', 'force_pair_incomplete_distinct_objects', "
+            "'force_pair_missing_distinct_objects', 'force_pair_missing_reaction', "
+            "'force_pair_unequal_magnitude', 'fraction_addition_adds_denominators', "
+            "'fraction_compares_numerators_only', 'fraction_incomplete_common_denominator', "
+            "'fraction_larger_denominator_larger_value', 'fraction_missing_common_denominator', "
+            "'friction_acts_along_motion', 'friction_incomplete_surface_contact', "
+            "'friction_missing_surface_contact', 'kinetic_energy_requires_motion', "
+            "'potential_energy_ignores_height', 'reflection_angles_unequal', "
+            "'rounding_truncates_digits', 'second_law_acceleration_ignores_mass', "
+            "'second_law_force_proportional_to_speed', 'sound_travels_through_vacuum', "
+            "'state_change_alters_particle_identity'"
+            ")",
             name="ck_review_attempt_error_type",
         ),
     )

@@ -32,7 +32,30 @@ tests/
 any ticket done — don't rely on "the new test I wrote passes," confirm
 nothing else broke.
 
+Check the **collected** count, not just the pass count. If one test file
+fails to import, pytest aborts collection and the summary can still read
+mostly-passing while whole files never ran. This has happened here and hid
+nine tests along with the broken feature they covered.
+
+Integration tests skip silently without `TEST_DATABASE_URL`. A skip is not
+a pass — if the summary says `N skipped`, find out what, because those are
+usually the tests that would have caught the bug:
+
+```bash
+TEST_DATABASE_URL="postgresql+asyncpg://rafiqi:rafiqi@127.0.0.1:5433/rafiqi_test" pytest -q
+```
+
+## A test that has never seen the bug proves nothing
+After writing a regression test, revert the fix and confirm the test fails,
+then restore. A test written after a fix has never been shown to detect
+anything — this step is what makes it a regression test rather than
+decoration.
+
 ## Definition of done, testing-wise
 A ticket isn't done until: happy-path test passes, role-rejection test
 passes (if applicable), tenant-isolation test passes (if applicable), and
 the full suite is green — not just the new tests.
+
+Then run the `qa` skill. Green tests mean the code does what the tests say;
+QA is what proves the feature works in a real browser against a real stack,
+which is a different claim and has repeatedly caught what tests missed.

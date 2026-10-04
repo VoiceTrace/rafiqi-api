@@ -23,6 +23,30 @@
 
 ## Session History
 
+### Homework review verified (2026-09-27–28)
+- Branch: `feat/E1-homework-engine`; frontend: `feat/E1-homework-ui`.
+- Added root `AGENTS.md` that points agents to the existing Claude skills.
+- Fixed homework recipient validation, duplicate option/answer validation,
+  options-only answer-key updates, non-draft mutation guards, optional field
+  clearing, input lengths, timezone-aware deadlines, and submission validation.
+- Assignment/submission mutations now lock their rows; mastery updates record
+  `last_attempt_at`. JSON options are annotated as a list, matching stored data.
+- Added PostgreSQL route regression coverage using a dedicated local `_test`
+  database and rollback-only fixtures. Full suite: 143 passing, with four
+  pre-existing AsyncMock warnings in study-session tests.
+- PostgreSQL 16.15: clean Alembic upgrade from empty database and `alembic check`
+  with no model/migration drift. No new database migration required so far.
+- The approved manual-MCQ scope now supports two to six unique answer options,
+  draft metadata editing, and timezone-aware deadlines. Browser checks covered
+  teacher create/edit/distribution and student submission in English; saved
+  results survive reload through the owner-only endpoint
+  `GET /homework/me/assignments/{student_assignment_id}/results`.
+- The review fixed client-visible homework bearer tokens, duplicate option IDs
+  after removal/addition, a nested dialog button, an inaccessible metadata
+  editor, swallowed errors, and missing results after reload.
+- Current manual MCQ implementation differs from the full Epic E class-linked,
+  mastery-generated design. Do not claim complete E1–E5 support.
+
 ### Session 1 (2026-09-12)
 - Read CLAUDE.md and ticket plan
 - Confirmed `rafiqi-api` is an empty git repo — no code scaffolded yet

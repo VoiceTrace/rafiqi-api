@@ -15,8 +15,26 @@ from app.services.review_catalog import catalog_seed
 
 
 def test_catalog_fixture_and_seed_agree():
-    fixture = Path(__file__).parents[1] / "alembic/versions/fixtures/review-catalog-v1.json"
-    assert json.loads(fixture.read_text(encoding="utf-8")) == catalog_seed()
+    """Every lesson the app serves must ship through a migration fixture.
+
+    Content arrives by migration, so the fixtures together have to reproduce the
+    catalog exactly. They are also append-only: editing an old fixture would leave a
+    database migrated last month serving different content from one migrated today,
+    which is why each version adds a file instead of rewriting one.
+    """
+    directory = Path(__file__).parents[1] / "alembic/versions/fixtures"
+    paths = sorted(directory.glob("review-catalog-v*.json"),
+                   key=lambda p: int(p.stem.rsplit("-v", 1)[1]))
+    assert paths, "no catalog fixtures found"
+    merged = {"subjects": [], "chapters": [], "lessons": []}
+    for path in paths:
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        for key in merged:
+            merged[key] += fixture[key]
+    for key, rows in merged.items():
+        ids = [row["id"] for row in rows]
+        assert len(ids) == len(set(ids)), f"duplicate {key} across catalog fixtures"
+    assert merged == catalog_seed()
 
 
 def test_catalog_migration_preserves_existing_session(monkeypatch):
@@ -54,18 +72,21 @@ def test_catalog_migration_preserves_existing_session(monkeypatch):
         for loc in ("en", "ar"):
             assert row["content"][loc]["objective"] == old_lesson[loc]["objective"]
             assert row["content"][loc]["questions"][1]["keywords"] == old_lesson[loc]["questions"][1]["keywords"]
-        assert db.scalar(text("select count(*) from review_lessons")) == 4
+        assert db.scalar(text("select count(*) from review_lessons")) == len(catalog_seed()["lessons"])
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
         assert db.scalar(text("select to_regclass('review_session_summaries')")) == "review_session_summaries"
-    command.downgrade(config, "-1")
+    # Downgrade to the revision just before the D6 summaries migration. Pinning the
+    # target rather than using "-1" keeps this asserting "D6 is reversible" even when
+    # a branch stacks further migrations on top of it.
+    command.downgrade(config, "6d9fe6080e14")
     with engine.connect() as db:
         assert db.scalar(text("select to_regclass('review_session_summaries')")) is None
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
     command.upgrade(config, "head")
     with engine.connect() as db:
-        assert db.scalar(text("select count(*) from review_lessons")) == 4
+        assert db.scalar(text("select count(*) from review_lessons")) == len(catalog_seed()["lessons"])
         assert db.scalar(text("select to_regclass('review_attempts')")) == "review_attempts"
         assert db.scalar(text("select to_regclass('mastery_records')")) == "mastery_records"
         assert db.scalar(text("select to_regclass('review_session_summaries')")) == "review_session_summaries"

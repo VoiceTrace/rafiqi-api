@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, users, review
+from app.api.routes import auth, homework, review, users
 from app.core.config import settings
 
 description = """
@@ -86,6 +86,21 @@ tags_metadata = [
         "description": "Lesson prep — objectives, flow, check-questions (B1/B2/B3).",
     },
     {
+        "name": "study-sessions",
+        "description": "Epic D — Student study sessions with Rafiqi. "
+                       "State machine: setup → review → check_in → deepen → wrap_up → closed. "
+                       "Generates questions, captures attempts, scores with hint ladder, "
+                       "computes mastery records on close.",
+    },
+    {
+        "name": "homework",
+        "description": "Epic E — Homework assignments. "
+                       "Teachers create MCQ assignments, add questions, and bulk-distribute to students. "
+                       "Students retrieve their assignments (no correct answers until submitted) and submit answers. "
+                       "Submission reveals correct answers and writes mastery records. "
+                       "Gap-digest endpoint aggregates class-level concept weaknesses for the teacher.",
+    },
+    {
         "name": "sessions",
         "description": "Live class sessions — start, join, real-time sync (C1/C2).",
     },
@@ -124,6 +139,10 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(homework.router)
+# The Epic D1 study-session router is deliberately not mounted: it shares
+# /study-sessions paths with the review companion but has different contracts
+# (see docs/review-companion.md). The review router owns those URLs.
 app.include_router(review.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
