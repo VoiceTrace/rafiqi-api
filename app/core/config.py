@@ -13,7 +13,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ENVIRONMENT: str = "development"
+    NOTIFICATION_INBOX_ENABLED: bool = True
+    NOTIFICATION_PUSH_ENABLED: bool = False
+    FIREBASE_PROJECT_ID: str = "rafiki-1c4d9"
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    NOTIFICATION_TOKEN_KEY: str = ""
+    NOTIFICATION_WEB_ORIGIN: str = "http://localhost:3000"
+    NOTIFICATION_PUSH_LIMIT: int = 10
+    NOTIFICATION_PUSH_WINDOW_SECONDS: int = 600
     MEDIA_DIR: str = "media"
+    RESOURCE_STORAGE_DIR: str = "private_resources"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
