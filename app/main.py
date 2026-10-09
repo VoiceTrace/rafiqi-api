@@ -1,11 +1,22 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, users, review, resources, notifications
+from app.api.routes import auth, cave, notifications, profiles, resources, review, users
 from app.core.config import settings
+from app.services import llm
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # Release the shared LLM gateway client's open connections on shutdown —
+    # it's a module-level singleton reused across every request (see
+    # app/services/llm.py), so nothing else closes it.
+    await llm.aclose()
 
 description = """
 ## Rafiqi API
@@ -72,14 +83,16 @@ tags_metadata = [
     },
     {
         "name": "profiles",
-        "description": "Student profile — traits, confidence scores, teaching tips. "
-                       "Built automatically from Cave chat (A2/A3). "
-                       "Teachers read; students see their own.",
+        "description": "Student learner profile — exactly 7 fixed cards (how you learn, "
+                       "where you are, what drives you, how you feel, study habits, "
+                       "language & company, your world), each a narrative reading. Built "
+                       "automatically from Cave chat (A2/A3). Students see their own.",
     },
     {
         "name": "conversations",
-        "description": "Cave chat sessions between a student and Rafiqi (A2). "
-                       "Each session produces profile trait updates (A3).",
+        "description": "Cave chat threads between a student and Rafiqi (A2). Never explicitly "
+                       "ended — any conversation stays resumable, and profile extraction (A3) "
+                       "runs automatically roughly every 20 messages.",
     },
     {
         "name": "lessons",
@@ -112,6 +125,7 @@ app = FastAPI(
     },
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -124,6 +138,8 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(cave.router)
+app.include_router(profiles.router)
 app.include_router(review.router)
 app.include_router(resources.router)
 app.include_router(notifications.router)
