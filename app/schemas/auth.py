@@ -1,5 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 
+from app.core.config import settings
+
 
 class LoginRequest(BaseModel):
     email: EmailStr = Field(..., examples=["teacher@alnoor.edu.sa"])
@@ -35,6 +37,12 @@ class TokenResponse(BaseModel):
         examples=["k3s9F1x...long-random-string"],
     )
     token_type: str = Field(default="bearer", examples=["bearer"])
+    expires_in: int = Field(
+        default=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        gt=0,
+        description="Access-token lifetime in seconds.",
+        examples=[1800],
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -43,6 +51,7 @@ class TokenResponse(BaseModel):
                     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZjU3ZDBmMiIsInNjaG9vbF9pZCI6ImY5OGIzYTQ5Iiwicm9sZSI6InRlYWNoZXIiLCJleHAiOjE3ODkzMzg1MDB9.signature",
                     "refresh_token": "k3s9F1x...long-random-string",
                     "token_type": "bearer",
+                    "expires_in": 1800,
                 }
             ]
         }

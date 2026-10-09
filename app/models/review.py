@@ -26,6 +26,18 @@ class ReviewLesson(Base):
     content: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+class ReviewGrade(Base):
+    __tablename__ = "review_grades"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    title: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ReviewLessonGrade(Base):
+    __tablename__ = "review_lesson_grades"
+    lesson_id: Mapped[str] = mapped_column(ForeignKey("review_lessons.id", ondelete="CASCADE"), primary_key=True)
+    grade_id: Mapped[str] = mapped_column(ForeignKey("review_grades.id", ondelete="CASCADE"), primary_key=True)
+
+
 class ReviewSession(Base):
     __tablename__ = "review_sessions"
     __table_args__ = (UniqueConstraint("school_id", "student_id", "lesson_id", name="uq_review_student_lesson"),)

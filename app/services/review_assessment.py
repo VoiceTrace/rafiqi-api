@@ -31,9 +31,13 @@ SUBJECT_ERROR_TAXONOMY: dict[str, frozenset[ReviewErrorType]] = {
 _CHOICE_ERRORS: dict[tuple[str, str], ReviewErrorType] = {
     ("force-pairs", "smaller"): ReviewErrorType.FORCE_PAIR_UNEQUAL_MAGNITUDE,
     ("force-pairs", "none"): ReviewErrorType.FORCE_PAIR_MISSING_REACTION,
+    ("sports-force-pairs", "weaker"): ReviewErrorType.FORCE_PAIR_UNEQUAL_MAGNITUDE,
+    ("sports-force-pairs", "none"): ReviewErrorType.FORCE_PAIR_MISSING_REACTION,
     ("balanced-forces-check", "other"): ReviewErrorType.BALANCED_FORCE_MEANS_STOPPED,
+    ("first-law-check", "stops"): ReviewErrorType.BALANCED_FORCE_MEANS_STOPPED,
     ("kinetic-energy-check", "other"): ReviewErrorType.KINETIC_ENERGY_REQUIRES_MOTION,
     ("equivalent-fractions-check", "other"): ReviewErrorType.EQUIVALENT_FRACTION_DENOMINATOR_ONLY,
+    ("compare-fractions-check", "larger-denominator"): ReviewErrorType.EQUIVALENT_FRACTION_DENOMINATOR_ONLY,
 }
 
 

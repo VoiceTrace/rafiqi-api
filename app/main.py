@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import auth, cave, profiles, review, users
+from app.api.routes import auth, cave, notifications, profiles, resources, review, users
 from app.core.config import settings
 from app.services import llm
 
@@ -141,6 +141,8 @@ app.include_router(users.router)
 app.include_router(cave.router)
 app.include_router(profiles.router)
 app.include_router(review.router)
+app.include_router(resources.router)
+app.include_router(notifications.router)
 
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 

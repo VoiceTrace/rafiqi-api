@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.review import ReviewSubject, ReviewChapter, ReviewLesson
+from app.models.review import ReviewSubject, ReviewChapter, ReviewLesson, ReviewGrade, ReviewLessonGrade
 from app.schemas.review import SubjectOut, ChapterOut, Locale
 from app.services.review import ReviewError
 from app.services.review_assessment import validate_question_assessment
@@ -14,7 +14,11 @@ def catalog_seed():
     data = json.loads((Path(__file__).parents[1] / "data/review-catalog.json").read_text(encoding="utf-8"))
     subjects = {s["id"] for s in data["subjects"]}
     chapters = {c["id"]: c for c in data["chapters"]}
-    for item in [*data["subjects"], *data["chapters"]]:
+    grades = {g["id"] for g in data.get("grades", [])}
+    lesson_ids = {lesson["id"] for lesson in data["lessons"]}
+    if any(row["grade_id"] not in grades or row["lesson_id"] not in lesson_ids for row in data.get("lesson_grades", [])):
+        raise ValueError("Invalid lesson grade mapping")
+    for item in [*data["subjects"], *data["chapters"], *data.get("grades", [])]:
         if not (all(item["title"].get(loc) for loc in ("en", "ar"))):
             raise ValueError("Invalid bilingual catalog seed")
     for c in chapters.values():
@@ -47,9 +51,10 @@ def catalog_seed():
 async def seed_catalog(db: AsyncSession) -> None:
     """Idempotent insert-only seed: never overwrite edited content or session snapshots."""
     data = catalog_seed()
-    for model, key in [(ReviewSubject, "subjects"), (ReviewChapter, "chapters"), (ReviewLesson, "lessons")]:
+    for model, key in [(ReviewSubject, "subjects"), (ReviewChapter, "chapters"), (ReviewLesson, "lessons"), (ReviewGrade, "grades"), (ReviewLessonGrade, "lesson_grades")]:
         for row in data[key]:
-            await db.execute(insert(model).values(**row).on_conflict_do_nothing(index_elements=["id"]))
+            keys = ["lesson_id", "grade_id"] if model is ReviewLessonGrade else ["id"]
+            await db.execute(insert(model).values(**row).on_conflict_do_nothing(index_elements=keys))
     await db.commit()
 
 
